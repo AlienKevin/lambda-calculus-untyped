@@ -1,4 +1,4 @@
-module LambdaEvaluator exposing (evalDefs, EvalStrategy(..))
+module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
@@ -23,7 +23,7 @@ evalDefs strategy defs =
     (\def (resultDefs, substs) ->
       let
         resultDef =
-          evalDef strategy substs def
+          internalEvalDef strategy substs def
       in  
       ( resultDef :: resultDefs
       , Dict.insert def.name.value resultDef.expr substs
@@ -33,8 +33,22 @@ evalDefs strategy defs =
     sortedDefs
 
 
-evalDef : EvalStrategy -> Dict String (Located Expr) -> Def -> Def
-evalDef strategy substs def =
+evalDef : EvalStrategy -> List Def -> Def -> Def
+evalDef strategy otherDefs def =
+  let
+    substs =
+      List.foldl
+        (\otherDef substitutions ->
+          Dict.insert otherDef.name.value otherDef.expr substitutions
+        )
+        Dict.empty
+        otherDefs
+  in
+  internalEvalDef strategy substs def
+
+
+internalEvalDef : EvalStrategy -> Dict String (Located Expr) -> Def -> Def
+internalEvalDef strategy substs def =
   { def
     | expr =
       withLocation def.expr <| evalExpr strategy substs def.expr.value

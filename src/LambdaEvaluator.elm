@@ -1,4 +1,4 @@
-module LambdaEvaluator exposing (evalDefs)
+module LambdaEvaluator exposing (evalDefs, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
@@ -7,8 +7,13 @@ import LambdaChecker exposing (sortDefs)
 import Location exposing (withLocation, Located)
 
 
-evalDefs : List Def -> List Def
-evalDefs defs =
+type EvalStrategy
+  = CallByName
+  | CallByValue
+
+
+evalDefs : EvalStrategy -> List Def -> List Def
+evalDefs strategy defs =
   let
     sortedDefs =
       sortDefs defs
@@ -18,7 +23,7 @@ evalDefs defs =
     (\def (resultDefs, substs) ->
       let
         resultDef =
-          evalDef substs def
+          evalDef strategy substs def
       in  
       ( resultDef :: resultDefs
       , Dict.insert def.name.value resultDef.expr substs
@@ -28,20 +33,28 @@ evalDefs defs =
     sortedDefs
 
 
-evalDef : Dict String (Located Expr) -> Def -> Def
-evalDef substs def =
+evalDef : EvalStrategy -> Dict String (Located Expr) -> Def -> Def
+evalDef strategy substs def =
   { def
     | expr =
-      withLocation def.expr <| evalExpr substs def.expr.value
+      withLocation def.expr <| evalExpr strategy substs def.expr.value
   }
 
 
-evalExpr : Dict String (Located Expr) -> Expr -> Expr
-evalExpr substs expr =
+evalExpr : EvalStrategy -> Dict String (Located Expr) -> Expr -> Expr
+evalExpr strategy substs expr =
+  case strategy of
+    CallByName ->
+      evalExprCallByName substs expr
+
+    CallByValue ->
+      evalExprCallByValue substs expr
+
+
+evalExprCallByName : Dict String (Located Expr) -> Expr -> Expr
+evalExprCallByName substs expr =
   let
     _ = Debug.log "expr" <| LambdaParser.showExpr expr
-    _ = Debug.log "AL -> substs" <| substs
-    _ = Debug.log "AL -> Dict.size substs" <| Dict.size substs
   in
   case expr of
     EApplication func arg ->
@@ -49,22 +62,62 @@ evalExpr substs expr =
         EAbstraction boundVar innerExpr ->
           let
             substitutedExpr =
-              evalExpr (Dict.insert boundVar.value arg substs) innerExpr.value
+              evalExprCallByName (Dict.insert boundVar.value arg substs) innerExpr.value
           in
           if substitutedExpr == innerExpr.value then
             substitutedExpr
           else
-            evalExpr substs <| substitutedExpr
+            evalExprCallByName substs <| substitutedExpr
         
         _ ->
           let
             substitutedFunc = 
-              withLocation func <| evalExpr substs func.value
+              withLocation func <| evalExprCallByName substs func.value
           in
           if substitutedFunc.value == func.value then
             EApplication substitutedFunc arg
           else
-            evalExpr substs <| EApplication substitutedFunc arg
+            evalExprCallByName substs <| EApplication substitutedFunc arg
+
+    EVariable name ->
+      case Dict.get name.value substs of
+        Nothing ->
+          expr
+        
+        Just subst ->
+          subst.value
+
+    EAbstraction _ _ ->
+      expr
+
+
+evalExprCallByValue : Dict String (Located Expr) -> Expr -> Expr
+evalExprCallByValue substs expr =
+  let
+    _ = Debug.log "expr" <| LambdaParser.showExpr expr
+  in
+  case expr of
+    EApplication func arg ->
+      case func.value of
+        EAbstraction boundVar innerExpr ->
+          let
+            substitutedExpr =
+              evalExprCallByValue (Dict.insert boundVar.value arg substs) innerExpr.value
+          in
+          if substitutedExpr == innerExpr.value then
+            substitutedExpr
+          else
+            evalExprCallByValue substs <| substitutedExpr
+        
+        _ ->
+          let
+            substitutedFunc = 
+              withLocation func <| evalExprCallByValue substs func.value
+          in
+          if substitutedFunc.value == func.value then
+            EApplication substitutedFunc arg
+          else
+            evalExprCallByValue substs <| EApplication substitutedFunc arg
 
     EVariable name ->
       case Dict.get name.value substs of
@@ -77,4 +130,4 @@ evalExpr substs expr =
     EAbstraction boundVar innerExpr ->
       EAbstraction
         boundVar
-        (withLocation innerExpr <| evalExpr (Dict.remove boundVar.value substs) innerExpr.value)
+        (withLocation innerExpr <| evalExprCallByValue (Dict.remove boundVar.value substs) innerExpr.value)

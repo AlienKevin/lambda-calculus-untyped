@@ -46,7 +46,7 @@ main =
             [] ->
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByName defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

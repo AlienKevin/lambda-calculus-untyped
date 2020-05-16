@@ -181,8 +181,61 @@ handleKeyDown { keyCode } model =
     Keyboard.Key.Enter ->
       addCell model
     
+    Keyboard.Key.Backspace ->
+      removeCell model
+    
     _ ->
       (model, Cmd.none)
+
+
+removeCell : Model -> (Model, Cmd Msg)
+removeCell model =
+  let
+    (activeSrc, _) =
+      getActiveCell model
+  in
+  if activeSrc == "" && Dict.size model.cells > 1 then
+    let
+      oldActiveCellIndex =
+        model.activeCellIndex
+
+      newActiveCellIndex =
+        -- first cell
+        if oldActiveCellIndex == 0 then
+          oldActiveCellIndex
+        else -- any cell after the first one
+          oldActiveCellIndex - 1
+
+      filterCell : Int -> Cell -> Dict Int Cell -> Dict Int Cell
+      filterCell index cell cells =
+        if index > oldActiveCellIndex then
+          Dict.insert (index - 1) cell cells
+        else if index == oldActiveCellIndex then
+          cells
+        else
+          Dict.insert index cell cells
+    in
+    ( { model
+        | cells =
+          Dict.foldr
+            filterCell
+            Dict.empty
+            model.cells
+        , activeCellIndex =
+          newActiveCellIndex
+      }
+    , focusCell newActiveCellIndex
+    )
+  else
+    ( model
+    , Cmd.none
+    )
+
+
+getActiveCell : Model -> Cell
+getActiveCell model =
+  Maybe.withDefault emptyCell <| -- impossible
+  Dict.get model.activeCellIndex model.cells
 
 
 addCell : Model -> (Model, Cmd Msg)
@@ -193,12 +246,12 @@ addCell model =
   in
   ( { model
       | cells =
-        Dict.foldr
-          (\index def ->
+        Dict.foldl
+          (\index cell cells ->
             if index > model.activeCellIndex then
-              Dict.insert (index + 1) def
+              Dict.insert (index + 1) cell cells
             else
-              Dict.insert index def
+              Dict.insert index cell cells
           )
           (Dict.singleton newActiveCellIndex emptyCell)
           model.cells

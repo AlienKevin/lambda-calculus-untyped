@@ -1,4 +1,4 @@
-module LambdaParser exposing (parseDefs, parseDef, parseExpr, showProblems, showDefs, showDef, showExpr, Def, Expr(..))
+module LambdaParser exposing (parseDefs, parseDef, parseExpr, showProblems, showDefs, showDef, showExpr, fakeDef, Def, Expr(..))
 
 
 import Parser.Advanced exposing (..)
@@ -120,7 +120,7 @@ internalParseExpr =
       (\es ->
         case es of
           [] ->
-            fakeLocated <| EVariable <| fakeLocated "IMPOSSIBLE" -- impossible
+            fakeLocatedExpr -- impossible
           
           e1 :: restEs ->
             formApplication e1 restEs
@@ -374,7 +374,14 @@ showExpr expr =
         
         _ ->
           "(" ++ showExpr e1.value ++ ")"
-      ) ++ " " ++ showExpr e2.value
+      )
+      ++ " "
+      ++ case e2.value of
+        EApplication _ _ ->
+          "(" ++ showExpr e2.value ++ ")"
+        
+        _ ->
+          showExpr e2.value
     
     EAbstraction boundVar innerExpr ->
       "\\" ++ boundVar.value ++ ". " ++ showExpr innerExpr.value
@@ -386,3 +393,15 @@ located parser =
     |= getPosition
     |= parser
     |= getPosition
+
+
+fakeLocatedExpr : Located Expr
+fakeLocatedExpr =
+  fakeLocated <| EVariable <| fakeLocated "IMPOSSIBLE"
+
+
+fakeDef : Def
+fakeDef =
+  { name = fakeLocated "IMPOSSIBLE"
+  , expr = fakeLocatedExpr
+  }

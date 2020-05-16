@@ -28,6 +28,7 @@ type Problem
   | ExpectingStartOfMultiLineComment
   | ExpectingEndOfMultiLineComment
   | ExpectingIndent
+  | ExpectingDefinition
 
 
 type alias Def =
@@ -44,7 +45,11 @@ type Expr
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
 parseDefs src =
-  run internalParseDefs src
+  run
+    (succeed identity
+      |= internalParseDefs
+      |. end ExpectingDefinition
+    )src
 
 
 parseDef : String -> Result (List (DeadEnd Context Problem)) Def
@@ -296,6 +301,9 @@ showProblem p =
 
     ExpectingIndent ->
       "an indentation"
+
+    ExpectingDefinition ->
+      "a definition"
 
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String

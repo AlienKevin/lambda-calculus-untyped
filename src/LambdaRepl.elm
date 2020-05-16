@@ -18,6 +18,7 @@ import Location exposing (Located)
 import Element as E
 import Element.Input as Input
 import Element.Font as Font
+import Element.Border as Border
 
 
 type alias Model =
@@ -35,6 +36,12 @@ type Msg
 
 type alias Cell =
   (String, Result String Def)
+
+
+colors =
+  { lightGrey =
+    E.rgb255 220 220 220
+  }
 
 
 main : Program () Model Msg
@@ -125,6 +132,13 @@ viewCell editingCellIndex currentCellIndex (src, result) =
         else
           E.el
           [ E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
+          , E.padding 10
+          , E.htmlAttribute <| Html.Attributes.style "line-height" "calc(1em + 24px)"
+          , E.htmlAttribute <| Html.Attributes.style "height" "calc(1em + 24px)"
+          , Border.width 1
+          , Border.rounded 5
+          , Border.color colors.lightGrey
+          , E.width E.fill
           ] <|
           E.text src
       ]

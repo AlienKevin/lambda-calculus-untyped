@@ -1,9 +1,10 @@
-module LambdaParser exposing (parseDefs, parseDef, parseExpr, showDeadEnds, showDefs, showDef, showExpr)
+module LambdaParser exposing (parseDefs, parseDef, parseExpr, showProblems, showDefs, showDef, showExpr, Def, Expr(..))
 
 
 import Parser.Advanced exposing (..)
 import Set
 import List.Extra
+import Location exposing (..)
 
 
 type alias LambdaParser a =
@@ -29,15 +30,15 @@ type Problem
 
 
 type alias Def =
-  { name : String
-  , value : Expr
+  { name : Located String
+  , expr : Located Expr
   }
 
 
 type Expr
-  = EVariable String
-  | EAbstraction String Expr
-  | EApplication Expr Expr
+  = EVariable (Located String)
+  | EAbstraction (Located String) (Located Expr)
+  | EApplication (Located Expr) (Located Expr)
 
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
@@ -50,7 +51,7 @@ parseDef src =
   run internalParseDef src
 
 
-parseExpr : String -> Result (List (DeadEnd Context Problem)) Expr
+parseExpr : String -> Result (List (DeadEnd Context Problem)) (Located Expr)
 parseExpr src =
   run internalParseExpr src
 
@@ -80,24 +81,40 @@ internalParseDef =
     |= internalParseExpr
 
 
-internalParseExpr : LambdaParser Expr
+internalParseExpr : LambdaParser (Located Expr)
 internalParseExpr =
   let
-    formApplication : Expr -> List Expr -> Expr
+    formApplication : Located Expr -> List (Located Expr) -> (Located Expr)
     formApplication lastE es =
       case es of
         [] ->
           lastE
         
         e1 :: prevEs ->
-          EApplication (formApplication e1 prevEs) lastE
+          let
+            func =
+              formApplication e1 prevEs
+            
+            arg =
+              lastE
+            
+            location =
+              { from =
+                func.from
+              , to =
+                arg.to
+              , value =
+                ()
+              }
+          in
+          withLocation location <| EApplication func arg
   in
   map
     (List.reverse >>
       (\es ->
         case es of
           [] ->
-            EVariable "IMPOSSIBLE" -- impossible
+            fakeLocated <| EVariable <| fakeLocated "IMPOSSIBLE" -- impossible
           
           e1 :: restEs ->
             formApplication e1 restEs
@@ -106,7 +123,7 @@ internalParseExpr =
     internalParseExprHelper
 
 
-internalParseExprHelper : LambdaParser (List Expr)
+internalParseExprHelper : LambdaParser (List (Located Expr))
 internalParseExprHelper =
   succeed (\e1 es ->
     e1 :: es
@@ -130,7 +147,7 @@ internalParseExprHelper =
       )
 
 
-parseGroup : LambdaParser Expr
+parseGroup : LambdaParser (Located Expr)
 parseGroup =
   succeed identity
     |. symbol (Token "(" ExpectingLeftParen)
@@ -141,9 +158,10 @@ parseGroup =
 
 
 -- \x. x
-parseAbstraction : LambdaParser Expr
+parseAbstraction : LambdaParser (Located Expr)
 parseAbstraction =
   inContext CAbstraction <|
+  located <|
   succeed EAbstraction
     |. symbol (Token "\\" ExpectingBackslash)
     |. sps
@@ -154,14 +172,19 @@ parseAbstraction =
     |= lazy (\_ -> internalParseExpr)
 
 
-parseVariable : LambdaParser Expr
+parseVariable : LambdaParser (Located Expr)
 parseVariable =
-  map EVariable parseName
+  map (\var ->
+    withLocation var <|
+    EVariable var
+  )
+  parseName
 
 
-parseName : LambdaParser String
+parseName : LambdaParser (Located String)
 parseName =
   inContext CVariable <|
+  located <|
   variable
     { start =
       Char.isLower
@@ -192,25 +215,17 @@ ifProgress parser offset =
     |> map (\newOffset -> if offset == newOffset then Done () else Loop newOffset)
 
 
-optional : LambdaParser a -> LambdaParser (Maybe a)
-optional parser =
-  oneOf
-    [ backtrackable (map Just parser)
-    , succeed Nothing
-    ]
-
-
-showDeadEnds : String -> List (DeadEnd Context Problem) -> String
-showDeadEnds src deadEnds =
+showProblems : String -> List (DeadEnd Context Problem) -> String
+showProblems src deadEnds =
   let
     deadEndGroups =
       List.Extra.groupWhile (\d1 d2 -> d1.row == d2.row && d1.col == d2.col) <| deadEnds
   in
-  String.join "\n" <| List.map (showDeadEndsHelper src) deadEndGroups
+  String.join "\n" <| List.map (showProblemsHelper src) deadEndGroups
 
 
-showDeadEndsHelper : String -> ((DeadEnd Context Problem), List (DeadEnd Context Problem)) -> String
-showDeadEndsHelper src (first, rests) =
+showProblemsHelper : String -> ((DeadEnd Context Problem), List (DeadEnd Context Problem)) -> String
+showProblemsHelper src (first, rests) =
   let
     location =
       showProblemLocation first.row first.col src
@@ -302,27 +317,6 @@ showProblemLocation row col src =
   line ++ "\n" ++ underline
 
 
-makeUnderline : String -> Int -> Int -> String
-makeUnderline row minCol maxCol =
-  String.toList row
-    |> List.indexedMap (\i _ -> toUnderlineChar minCol maxCol i)
-    |> String.fromList
-
-
-toUnderlineChar : Int -> Int -> Int -> Char
-toUnderlineChar minCol maxCol col =
-  if minCol <= col && col < maxCol then
-    '^'
-  else
-    ' '
-
-
-getLine : Int -> String -> String
-getLine row src =
-  Maybe.withDefault ("CAN'T GET LINE AT ROW " ++ String.fromInt row) -- impossible
-    <| List.Extra.getAt (row - 1) <| String.split "\n" src
-
-
 showDefs : List Def -> String
 showDefs defs =
   String.join "\n" <|
@@ -332,25 +326,32 @@ showDefs defs =
 
 
 showDef : Def -> String
-showDef {name, value} =
-  name ++ " = " ++ showExpr value
+showDef {name, expr} =
+  name.value ++ " = " ++ showExpr expr.value
 
 
 showExpr : Expr -> String
 showExpr expr =
   case expr of
     EVariable name ->
-      name
+      name.value
     
     EApplication e1 e2 ->
-      ( case e1 of
+      ( case e1.value of
         EVariable _ ->
-          showExpr e1
+          showExpr e1.value
         
         _ ->
-          "(" ++ showExpr e1 ++ ")"
-      ) ++ " " ++ showExpr e2
+          "(" ++ showExpr e1.value ++ ")"
+      ) ++ " " ++ showExpr e2.value
     
     EAbstraction boundVar innerExpr ->
-      "\\" ++ boundVar ++ ". " ++ showExpr innerExpr
+      "\\" ++ boundVar.value ++ ". " ++ showExpr innerExpr.value
 
+
+located : LambdaParser a -> LambdaParser (Located a)
+located parser =
+  succeed Located
+    |= getPosition
+    |= parser
+    |= getPosition

@@ -21,6 +21,8 @@ import Element.Input as Input
 import Element.Font as Font
 import Element.Border as Border
 import Element.Events
+import Element.Background as Background
+import FeatherIcons
 
 
 type alias Model =
@@ -28,6 +30,7 @@ type alias Model =
   , activeCellIndex : Int
   , evalStrategy : EvalStrategy
   , orientation : Orientation
+  , showHelpWindow : Bool
   }
 
 
@@ -36,6 +39,8 @@ type Msg
   | ActivateCell Int
   | HandleKeyDown KeyboardEvent
   | HandleOrientation Int
+  | OpenHelpWindow
+  | CloseHelpWindow
   | NoOp
 
 
@@ -51,6 +56,16 @@ type Orientation
 colors =
   { lightGrey =
     E.rgb255 220 220 220
+  }
+
+
+styles =
+  { title =
+    [ Font.bold
+    ]
+  , subtitle =
+    [ Font.italic
+    ]
   }
 
 
@@ -74,6 +89,8 @@ init _ =
       CallByValue
     , orientation =
       Landscape
+    , showHelpWindow =
+      False
     }
   , Task.perform (HandleOrientation << round << .width << .viewport) Browser.Dom.getViewport
   )
@@ -92,6 +109,8 @@ view model =
       ]
     , E.width ( E.fill |> E.maximum 700 )
     , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
+    , E.inFront <| viewHelpButton model
+    , E.inFront <| viewHelpWindow model
     ] ++ case model.orientation of
       Landscape ->
         [ E.padding 30
@@ -112,6 +131,95 @@ view model =
       viewCell model.activeCellIndex index result
     )
     (Dict.values model.cells)
+
+
+viewHelpWindow : Model -> E.Element Msg
+viewHelpWindow model =
+  if model.showHelpWindow then
+    E.column
+    [ E.centerX
+    , E.centerY
+    , E.padding 30
+    , E.spacing 10
+    , Background.color colors.lightGrey
+    , E.inFront viewCloseHelpButton
+    , Border.rounded 10
+    ]
+    [ E.el styles.title <| E.text "Help"
+    , E.el styles.subtitle <| E.text "Keyboard Shortcuts"
+    , E.row
+      []
+      [ E.html
+        ( FeatherIcons.arrowUp
+        |> FeatherIcons.toHtml
+          [ Html.Attributes.style "margin-right" "20px" ]
+        )
+      , E.text "Go to previous cell"
+      ]
+    , E.row
+      []
+      [ E.html
+        ( FeatherIcons.arrowDown
+        |> FeatherIcons.toHtml
+          [ Html.Attributes.style "margin-right" "20px" ]
+        )
+      , E.text "Go to next cell"
+      ]
+    , E.row
+      []
+      [ E.html
+        ( FeatherIcons.cornerDownLeft
+        |> FeatherIcons.toHtml
+          [ Html.Attributes.style "margin-right" "20px" ]
+        )
+      , E.text "Add newline"
+      ]
+    , E.row
+      [ E.spacing 5 ]
+      [ E.text "Ctrl"
+      , E.text "+"
+      , E.html
+        ( FeatherIcons.cornerDownLeft
+        |> FeatherIcons.toHtml
+          [ Html.Attributes.style "margin-right" "20px"
+          , Html.Attributes.style "margin-left" "5px"
+          ]
+        )
+      , E.text "Add cell"
+      ]
+    ]
+  else
+    E.none
+
+
+viewCloseHelpButton : E.Element Msg
+viewCloseHelpButton =
+  Input.button
+    [ E.alignRight ]
+    { onPress =
+      Just CloseHelpWindow
+    , label =
+      E.html
+        ( FeatherIcons.xCircle
+        |> FeatherIcons.toHtml []
+        )
+    }
+
+
+viewHelpButton : Model -> E.Element Msg
+viewHelpButton model =
+  Input.button
+    [ E.alignRight
+    , E.padding 10
+    ]
+    { onPress =
+      Just OpenHelpWindow
+    , label =
+      E.html
+        ( FeatherIcons.helpCircle
+        |> FeatherIcons.toHtml []
+        )
+    }
 
 
 viewCell : Int -> Int -> (String, Result String Def) -> E.Element Msg
@@ -187,15 +295,41 @@ update msg model =
 
     HandleOrientation width ->
       handleOrientation width model
+
+    OpenHelpWindow ->
+      openHelpWindow model
+
+    CloseHelpWindow ->
+      closeHelpWindow model
       
     NoOp ->
       (model, Cmd.none)
 
 
+closeHelpWindow : Model -> (Model, Cmd Msg)
+closeHelpWindow model =
+  ( { model
+      | showHelpWindow =
+        False
+    }
+  , Cmd.none
+  )
+
+
+
+openHelpWindow : Model -> (Model, Cmd Msg)
+openHelpWindow model =
+  ( { model
+      | showHelpWindow =
+        True
+    }
+  , Cmd.none
+  )
+
+
 handleOrientation : Int -> Model -> (Model, Cmd Msg)
 handleOrientation width model =
   let
-    _ = Debug.log "AL -> width" <| width
     orientation =
       if width <= 450 then
         Portrait

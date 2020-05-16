@@ -137,7 +137,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
       [ E.width E.fill]
       [ E.text <| "> "
       , if activeCellIndex == currentCellIndex then
-          Input.text
+          Input.multiline
             [ E.width E.fill
             , Input.focusedOnLoad
             , E.htmlAttribute <|
@@ -153,13 +153,14 @@ viewCell activeCellIndex currentCellIndex (src, result) =
               Nothing
             , label =
               Input.labelHidden "edit definition"
+            , spellcheck =
+              False
             }
         else
           E.el
           [ E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
           , E.padding 10
-          , E.htmlAttribute <| Html.Attributes.style "line-height" "calc(1em + 24px)"
-          , E.htmlAttribute <| Html.Attributes.style "height" "calc(1em + 24px)"
+          , E.htmlAttribute <| Html.Attributes.style "min-height" "calc(1em + 24px)"
           , Border.width 1
           , Border.rounded 5
           , Border.color colors.lightGrey
@@ -220,10 +221,13 @@ activateCell index model =
 
 
 handleKeyDown : KeyboardEvent -> Model -> (Model, Cmd Msg)
-handleKeyDown { keyCode } model =
+handleKeyDown { keyCode, ctrlKey } model =
   case keyCode of
     Keyboard.Key.Enter ->
-      addCell model
+      if ctrlKey then
+        addCell model
+      else
+        (model, Cmd.none)
     
     Keyboard.Key.Backspace ->
       removeCell model

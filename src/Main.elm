@@ -4,23 +4,23 @@ module Main exposing (main)
 import Html
 import LambdaParser
 import LambdaChecker
+import LambdaEvaluator
 import Dict
 
 
 source =
-  -- "id = (\\x. \\x. x) x"
+  -- "id = \\x. x"
   -- "always = \\a. \\b. a"
   -- "apply = \\a. \\b. a b"
   -- "f = \\x. \\y. x y x"
   -- "f = x y z"
-  """{- tru in lambda calculus -}
-tru = \\a. \\b. a -- true
+--   """{- tru in lambda calculus -}
+-- v = tru fls fls
+-- tru = \\a. \\b. a -- true
 
-fls = \\a. \\b. b -- false
-
-v = tru fls fls
--- end of file
-  """
+-- fls = \\a. \\b. b -- false
+--   """
+  "v = (\\x.x) ((\\x.x) (\\z. (\\x.x) z))"
 
 
 main =
@@ -44,7 +44,16 @@ main =
           , Html.pre [] [ Html.text <| LambdaParser.showDefs defs ]
           , case LambdaChecker.checkDefs defs of
             [] ->
-              Html.pre [] [ Html.text "✔️ Passed check." ]
+              let
+                resultDefs =
+                  LambdaEvaluator.evalDefs defs
+              in
+              Html.div []
+              [ Html.h1 [] [ Html.text "Evaluation result:" ]
+              , Html.pre []
+                [ Html.text <| LambdaParser.showDefs resultDefs
+                ]
+              ]
             
             problems ->
               Html.pre [] [ Html.text <| LambdaChecker.showProblems source problems ]

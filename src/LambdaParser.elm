@@ -27,6 +27,7 @@ type Problem
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
   | ExpectingEndOfMultiLineComment
+  | ExpectingIndent
 
 
 type alias Def =
@@ -125,6 +126,7 @@ internalParseExpr =
 
 internalParseExprHelper : LambdaParser (List (Located Expr))
 internalParseExprHelper =
+  checkIndent <|
   succeed (\e1 es ->
     e1 :: es
   )
@@ -215,6 +217,24 @@ ifProgress parser offset =
     |> map (\newOffset -> if offset == newOffset then Done () else Loop newOffset)
 
 
+checkIndent : LambdaParser a -> LambdaParser a
+checkIndent parser =
+  succeed (\indentation column ->
+    (parser, indentation < column)
+    )
+    |= getIndent
+    |= getCol
+    |> andThen checkIndentHelp
+
+
+checkIndentHelp : (LambdaParser a, Bool) -> LambdaParser a
+checkIndentHelp (parser, isIndented) =
+  if isIndented then
+    parser
+  else
+    problem ExpectingIndent
+
+
 showProblems : String -> List (DeadEnd Context Problem) -> String
 showProblems src deadEnds =
   let
@@ -273,6 +293,9 @@ showProblem p =
     
     ExpectingEndOfMultiLineComment ->
       "the end of a multi-line comment '-}'"
+
+    ExpectingIndent ->
+      "an indentation"
 
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String

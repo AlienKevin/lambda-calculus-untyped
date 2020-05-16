@@ -19,6 +19,7 @@ import Element as E
 import Element.Input as Input
 import Element.Font as Font
 import Element.Border as Border
+import Element.Events
 
 
 type alias Model =
@@ -30,6 +31,7 @@ type alias Model =
 
 type Msg
   = EditCell String
+  | ActivateCell Int
   | HandleKeyDown KeyboardEvent
   | NoOp
 
@@ -139,6 +141,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
           , Border.rounded 5
           , Border.color colors.lightGrey
           , E.width E.fill
+          , Element.Events.onClick <| ActivateCell currentCellIndex
           ] <|
           E.text src
       ]
@@ -152,11 +155,24 @@ update msg model =
     EditCell newSrc ->
       editCell newSrc model
 
+    ActivateCell index ->
+      activateCell index model
+
     HandleKeyDown event ->
       handleKeyDown event model
       
     NoOp ->
       (model, Cmd.none)
+
+
+activateCell : Int -> Model -> (Model, Cmd Msg)
+activateCell index model =
+  ( { model
+      | activeCellIndex =
+        index
+    }
+  , focusCell index
+  )
 
 
 handleKeyDown : KeyboardEvent -> Model -> (Model, Cmd Msg)
@@ -189,8 +205,13 @@ addCell model =
       , activeCellIndex =
         newActiveCellIndex
     }
-  , Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| "cell" ++ String.fromInt newActiveCellIndex
+  , focusCell newActiveCellIndex
   )
+
+
+focusCell : Int -> Cmd Msg
+focusCell index =
+  Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| "cell" ++ String.fromInt index
 
 
 editCell : String -> Model -> (Model, Cmd Msg)

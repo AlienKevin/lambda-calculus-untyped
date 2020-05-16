@@ -23,7 +23,7 @@ import Element.Border as Border
 
 type alias Model =
   { cells : Dict Int Cell
-  , editingCellIndex : Int
+  , activeCellIndex : Int
   , evalStrategy : EvalStrategy
   }
 
@@ -58,7 +58,7 @@ init : () -> (Model, Cmd Msg)
 init _ =
   ( { cells =
       Dict.singleton 0 emptyCell
-    , editingCellIndex =
+    , activeCellIndex =
       0
     , evalStrategy =
       CallByValue
@@ -88,13 +88,13 @@ view model =
   ] <|
   List.indexedMap
     (\index result ->
-      viewCell model.editingCellIndex index result
+      viewCell model.activeCellIndex index result
     )
     (Dict.values model.cells)
 
 
 viewCell : Int -> Int -> (String, Result String Def) -> E.Element Msg
-viewCell editingCellIndex currentCellIndex (src, result) =
+viewCell activeCellIndex currentCellIndex (src, result) =
   let
     resultDisplay =
       case result of
@@ -111,7 +111,7 @@ viewCell editingCellIndex currentCellIndex (src, result) =
     [ E.row
       [ E.width E.fill]
       [ E.text <| "> "
-      , if editingCellIndex == currentCellIndex then
+      , if activeCellIndex == currentCellIndex then
           Input.text
             [ E.width E.fill
             , Input.focusedOnLoad
@@ -172,24 +172,24 @@ handleKeyDown { keyCode } model =
 addCell : Model -> (Model, Cmd Msg)
 addCell model =
   let
-    newEditingCellIndex =
-      model.editingCellIndex + 1
+    newActiveCellIndex =
+      model.activeCellIndex + 1
   in
   ( { model
       | cells =
         Dict.foldr
           (\index def ->
-            if index > model.editingCellIndex then
+            if index > model.activeCellIndex then
               Dict.insert (index + 1) def
             else
               Dict.insert index def
           )
-          (Dict.singleton newEditingCellIndex emptyCell)
+          (Dict.singleton newActiveCellIndex emptyCell)
           model.cells
-      , editingCellIndex =
-        newEditingCellIndex
+      , activeCellIndex =
+        newActiveCellIndex
     }
-  , Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| "cell" ++ String.fromInt newEditingCellIndex
+  , Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| "cell" ++ String.fromInt newActiveCellIndex
   )
 
 
@@ -198,13 +198,13 @@ editCell newSrc model =
   ( { model
       | cells =
         Dict.update
-          model.editingCellIndex
+          model.activeCellIndex
           (\_ ->
             let
               otherCells =
                 Dict.foldl
                   (\index (_, result) others ->
-                    if index /= model.editingCellIndex then
+                    if index /= model.activeCellIndex then
                       case result of
                         Ok def ->
                           def :: others

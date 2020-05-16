@@ -3,6 +3,7 @@ module LambdaRepl exposing (main)
 
 import Browser
 import Browser.Dom
+import Browser.Events
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -26,6 +27,7 @@ type alias Model =
   { cells : Dict Int Cell
   , activeCellIndex : Int
   , evalStrategy : EvalStrategy
+  , orientation : Orientation
   }
 
 
@@ -33,11 +35,17 @@ type Msg
   = EditCell String
   | ActivateCell Int
   | HandleKeyDown KeyboardEvent
+  | HandleOrientation Int
   | NoOp
 
 
 type alias Cell =
   (String, Result String Def)
+
+
+type Orientation
+  = Portrait
+  | Landscape
 
 
 colors =
@@ -64,8 +72,10 @@ init _ =
       0
     , evalStrategy =
       CallByValue
+    , orientation =
+      Landscape
     }
-  , Cmd.none
+  , Task.perform (HandleOrientation << round << .width << .viewport) Browser.Dom.getViewport
   )
 
 
@@ -77,13 +87,22 @@ emptyCell =
 view : Model -> Html Msg
 view model =
   E.layout
-  [ Font.family
-    [ Font.monospace
-    ]
-  , E.padding 30
-  , E.width ( E.fill |> E.maximum 700 )
-  , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
-  ] <|
+  ( [ Font.family
+      [ Font.monospace
+      ]
+    , E.width ( E.fill |> E.maximum 700 )
+    , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
+    ] ++ case model.orientation of
+      Landscape ->
+        [ E.padding 30
+        , Font.size 16
+        ]
+      
+      Portrait ->
+        [ E.padding 10
+        , Font.size 20
+        ]
+  ) <|
   E.column
   [ E.spacing 15
   , E.width E.fill
@@ -104,7 +123,11 @@ viewCell activeCellIndex currentCellIndex (src, result) =
           E.text <| "  " ++ LambdaParser.showDef def
         
         Err msg ->
-          E.text <| msg
+          E.html <|
+          Html.pre
+            [ Html.Attributes.style "white-space" "pre-wrap" ]
+            [ Html.text msg
+            ]
   in
   E.column
     [ E.spacing 15
@@ -160,9 +183,30 @@ update msg model =
 
     HandleKeyDown event ->
       handleKeyDown event model
+
+    HandleOrientation width ->
+      handleOrientation width model
       
     NoOp ->
       (model, Cmd.none)
+
+
+handleOrientation : Int -> Model -> (Model, Cmd Msg)
+handleOrientation width model =
+  let
+    _ = Debug.log "AL -> width" <| width
+    orientation =
+      if width <= 450 then
+        Portrait
+      else
+        Landscape
+  in
+  ( { model
+      | orientation =
+        orientation
+    }
+  , Cmd.none
+  )
 
 
 activateCell : Int -> Model -> (Model, Cmd Msg)
@@ -362,4 +406,4 @@ evalDef strategy otherDefs src =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+  Browser.Events.onResize (\width _ -> HandleOrientation width)

@@ -183,9 +183,55 @@ handleKeyDown { keyCode } model =
     
     Keyboard.Key.Backspace ->
       removeCell model
-    
+
+    Keyboard.Key.Up ->
+      activatePreviousCell model
+
+    Keyboard.Key.Down ->
+      activateNextCell model
+
     _ ->
       (model, Cmd.none)
+
+
+activateNextCell: Model -> (Model, Cmd Msg)
+activateNextCell model =
+  let
+    oldActiveCellIndex =
+      model.activeCellIndex
+
+    newActiveCellIndex =
+      if oldActiveCellIndex == Dict.size model.cells - 1 then
+        oldActiveCellIndex
+      else
+        oldActiveCellIndex + 1
+  in
+  ( { model
+      | activeCellIndex =
+        newActiveCellIndex
+    }
+  , focusCell newActiveCellIndex
+  )
+
+
+activatePreviousCell: Model -> (Model, Cmd Msg)
+activatePreviousCell model =
+  let
+    oldActiveCellIndex =
+      model.activeCellIndex
+
+    newActiveCellIndex =
+      if oldActiveCellIndex == 0 then
+        oldActiveCellIndex
+      else
+        oldActiveCellIndex - 1
+  in
+  ( { model
+      | activeCellIndex =
+        newActiveCellIndex
+    }
+  , focusCell newActiveCellIndex
+  )
 
 
 removeCell : Model -> (Model, Cmd Msg)

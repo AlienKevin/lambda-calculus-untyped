@@ -57,7 +57,12 @@ checkExpr names expr =
 
 showProblems : String -> List Problem -> String
 showProblems src problems =
-  String.join "\n" <| List.map (showProblemHelper src) problems
+  String.join "\n\n" <|
+  List.indexedMap
+    (\index problem ->
+      "#" ++ String.fromInt (index + 1) ++ ": " ++ showProblemHelper src problem
+    )
+    problems
 
 
 showProblemHelper : String -> Problem -> String

@@ -13,9 +13,13 @@ source =
   -- "apply = \\a. \\b. a b"
   -- "f = \\x. \\y. x y x"
   -- "f = x y z"
-  """tru = \\a. \\b. a
-fls = \\a. \\b. b
+  """{- tru in lambda calculus -}
+tru = \\a. \\b. a -- true
+
+fls = \\a. \\b. b -- false
+
 v = tru fls fls
+-- end of file
   """
 
 
@@ -30,7 +34,7 @@ main =
     , case parseResult of
       Err deadEnds ->
         Html.pre []
-        [ Html.text <| "⚠️ I got stuck during parsing:"
+        [ Html.text <| "⚠️ I got stuck while parsing:\n"
         , Html.text <| LambdaParser.showProblems source deadEnds
         ]
 
@@ -40,7 +44,7 @@ main =
           , Html.pre [] [ Html.text <| LambdaParser.showDefs defs ]
           , case LambdaChecker.checkDefs defs of
             [] ->
-              Html.pre [] [ Html.text "✔ Passed check." ]
+              Html.pre [] [ Html.text "✔️ Passed check." ]
             
             problems ->
               Html.pre [] [ Html.text <| LambdaChecker.showProblems source problems ]

@@ -1,9 +1,11 @@
-module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems)
+module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, sortDefs)
 
 
-import LambdaParser exposing (Def, Expr(..))
+import LambdaParser exposing (fakeDef, Def, Expr(..))
 import Dict exposing (Dict)
-import Location exposing (Located, showLocation)
+import Location exposing (showLocation, Located)
+import Set exposing (Set)
+import List.Extra
 
 
 type Problem
@@ -13,6 +15,10 @@ type Problem
 
 checkDefs : List Def -> List Problem
 checkDefs defs =
+  let
+    sortedDefs =
+      sortDefs defs
+  in
   Tuple.first <|
   List.foldl
     (\def (problems, names) ->
@@ -30,7 +36,7 @@ checkDefs defs =
       )
     )
     ([], Dict.empty)
-    defs
+    sortedDefs
 
 
 checkDef : Dict String (Located String) -> Def -> List Problem
@@ -82,4 +88,80 @@ showProblemHelper src problem =
       , showLocation src name
       , "Hint: Try defining `" ++ name.value ++ "` somewhere."
       ]
+
+
+sortDefs : List Def -> List Def
+sortDefs defs =
+  let
+    dependencies =
+      List.foldl
+      (\def deps ->
+        Dict.insert
+        def.name.value
+        (List.map .value <| getFreeVariables def.expr.value)
+        deps
+      )
+      Dict.empty
+      defs
+    
+    sortedNames =
+      sortDependencies dependencies
+  in
+  List.map
+  (\name ->
+    Maybe.withDefault fakeDef <| -- impossible
+    List.Extra.find
+      (\def ->
+        def.name.value == name
+      )
+      defs
+  )
+  sortedNames
+
+
+getFreeVariables : Expr -> List (Located String)
+getFreeVariables expr =
+  case expr of
+    EVariable name ->
+      [ name ]
+    
+    EAbstraction boundVar innerExpr ->
+      getFreeVariables innerExpr.value
+    
+    EApplication func arg ->
+      getFreeVariables func.value ++ getFreeVariables arg.value
+
+
+type alias Dependencies =
+  Dict String (List String)
+
+
+sortDependencies : Dependencies -> List String
+sortDependencies dep =
+  let
+    (result, _, _) =
+      sortDependenciesHelper ([], Set.empty, dep)
+  in
+  List.reverse result
   
+
+sortDependenciesHelper : (List String, Set String, Dependencies) -> (List String, Set String, Dependencies)
+sortDependenciesHelper (result0, used0, dep0) =
+  let
+    (result1, used1, dep1) =
+      Dict.foldl
+      (\k v (result, used, dep) ->
+        if List.all (\value -> Set.member value used) v then
+          (k :: result, Set.insert k used, Dict.filter (\k1 _ -> k /= k1) dep)
+        else
+          (result, used, dep)
+      )
+      (result0, used0, dep0)
+      dep0
+  in
+  if Dict.isEmpty dep1 then
+    (result1, used1, dep1)
+  else if Dict.size dep0 == Dict.size dep1 then
+    ((List.reverse <| Dict.keys dep1) ++ result1, used1, dep1)
+  else
+    sortDependenciesHelper (result1, used1, dep1)

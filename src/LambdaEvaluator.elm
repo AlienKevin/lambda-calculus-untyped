@@ -67,9 +67,6 @@ evalExpr strategy substs expr =
 
 evalExprCallByName : Dict String (Located Expr) -> Expr -> Expr
 evalExprCallByName substs expr =
-  let
-    _ = Debug.log "expr" <| LambdaParser.showExpr expr
-  in
   case expr of
     EApplication func arg ->
       case func.value of
@@ -107,9 +104,6 @@ evalExprCallByName substs expr =
 
 evalExprCallByValue : Dict String (Located Expr) -> Expr -> Expr
 evalExprCallByValue substs expr =
-  let
-    _ = Debug.log "expr" <| LambdaParser.showExpr expr
-  in
   case expr of
     EApplication func arg ->
       case func.value of

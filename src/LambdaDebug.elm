@@ -1,11 +1,10 @@
-module Main exposing (main)
+module LambdaDebug exposing (main)
 
 
 import Html
 import LambdaParser
 import LambdaChecker
 import LambdaEvaluator
-import Dict
 
 
 source =

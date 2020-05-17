@@ -29,6 +29,8 @@ type Problem
   | ExpectingEndOfMultiLineComment
   | ExpectingIndent
   | ExpectingDefinition
+  | ExpectingEndOfDefinition
+  | ExpectingEndOfExpression
 
 
 type alias Def =
@@ -49,17 +51,28 @@ parseDefs src =
     (succeed identity
       |= internalParseDefs
       |. end ExpectingDefinition
-    )src
+    )
+    src
 
 
 parseDef : String -> Result (List (DeadEnd Context Problem)) Def
 parseDef src =
-  run internalParseDef src
+  run
+    (succeed identity
+      |= internalParseDef
+      |. end ExpectingEndOfDefinition
+    )
+    src
 
 
 parseExpr : String -> Result (List (DeadEnd Context Problem)) (Located Expr)
 parseExpr src =
-  run internalParseExpr src
+  run
+    (succeed identity
+      |= internalParseExpr
+      |. end ExpectingEndOfExpression
+    )
+    src
 
 
 internalParseDefs : LambdaParser (List Def)
@@ -304,6 +317,12 @@ showProblem p =
 
     ExpectingDefinition ->
       "a definition"
+
+    ExpectingEndOfDefinition ->
+      "the end of the definition"
+
+    ExpectingEndOfExpression ->
+      "the end of the expression"
 
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String

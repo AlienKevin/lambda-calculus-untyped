@@ -37,6 +37,7 @@ type alias Model =
 type Msg
   = EditCell String
   | ActivateCell Int
+  | AddCell
   | HandleKeyDown KeyboardEvent
   | HandleOrientation Int
   | OpenHelpWindow
@@ -131,6 +132,7 @@ view model =
       viewCell model.activeCellIndex index result
     )
     (Dict.values model.cells)
+  ++ [ viewAddCellButton ]
 
 
 viewHelpWindow : Model -> E.Element Msg
@@ -222,6 +224,20 @@ viewHelpButton model =
     }
 
 
+viewAddCellButton : E.Element Msg
+viewAddCellButton =
+  Input.button
+    [ E.centerX ]
+    { onPress =
+      Just AddCell
+    , label =
+      E.html
+        ( FeatherIcons.plusCircle
+        |> FeatherIcons.toHtml []
+        )
+    }
+
+
 viewCell : Int -> Int -> (String, Result String Def) -> E.Element Msg
 viewCell activeCellIndex currentCellIndex (src, result) =
   let
@@ -289,6 +305,9 @@ update msg model =
 
     ActivateCell index ->
       activateCell index model
+
+    AddCell ->
+      addCell model
 
     HandleKeyDown event ->
       handleKeyDown event model

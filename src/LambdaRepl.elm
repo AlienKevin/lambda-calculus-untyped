@@ -545,7 +545,7 @@ editCell newSrc model =
           model.activeCellIndex
           (\_ ->
             let
-              otherCells =
+              otherDefs =
                 Dict.foldl
                   (\index (_, result) others ->
                     if index /= model.activeCellIndex then
@@ -561,7 +561,7 @@ editCell newSrc model =
                   []
                   model.cells
             in
-            Just (newSrc, evalDef model.evalStrategy otherCells newSrc)
+            Just (newSrc, evalDef model.evalStrategy otherDefs newSrc)
           )
           model.cells
     }

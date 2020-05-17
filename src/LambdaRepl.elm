@@ -1,4 +1,4 @@
-module LambdaRepl exposing (main)
+port module LambdaRepl exposing (main)
 
 
 import Browser
@@ -10,7 +10,9 @@ import Html.Events
 import Keyboard.Event exposing (KeyboardEvent)
 import Keyboard.Key
 import Task
-import Json.Decode
+import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Field as Field
+import Json.Encode as Encode
 import Dict exposing (Dict)
 import LambdaParser exposing (fakeDef, Def, Expr)
 import LambdaChecker
@@ -25,6 +27,10 @@ import Element.Background as Background
 import FeatherIcons
 import List.Extra
 import Array
+
+
+port saveModelPort : Encode.Value -> Cmd msg
+port pageWillClosePort : (() -> msg) -> Sub msg
 
 
 type alias Model =
@@ -44,6 +50,7 @@ type Msg
   | HandleOrientation Int
   | SetPopUp PopUp
   | SetEvalStrategy EvalStrategy
+  | SaveModel ()
   | NoOp
 
 
@@ -87,7 +94,7 @@ styles =
   }
 
 
-main : Program () Model Msg
+main : Program (Maybe String) Model Msg
 main =
   Browser.element
     { init = init
@@ -97,19 +104,31 @@ main =
     }
 
 
-init : () -> (Model, Cmd Msg)
-init _ =
-  ( { cells =
-      Dict.singleton 0 emptyCell
-    , activeCellIndex =
-      0
-    , evalStrategy =
-      CallByValue
-    , orientation =
-      Landscape
-    , popUp =
-      NoPopUp
-    }
+init : (Maybe String) -> (Model, Cmd Msg)
+init savedModelStr =
+  let
+    defaultModel =
+      { cells =
+        Dict.singleton 0 emptyCell
+      , activeCellIndex =
+        0
+      , evalStrategy =
+        CallByValue
+      , orientation =
+        Landscape
+      , popUp =
+        NoPopUp
+      }
+    
+    initialModel =
+      case savedModelStr of
+        Just str ->
+          Result.withDefault defaultModel <| Decode.decodeString decodeModel str
+        
+        Nothing ->
+          defaultModel
+  in
+  ( initialModel
   , Task.perform (HandleOrientation << round << .width << .viewport) Browser.Dom.getViewport
   )
 
@@ -387,7 +406,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
             , Input.focusedOnLoad
             , E.htmlAttribute <|
               Html.Events.on "keydown" <|
-              Json.Decode.map HandleKeyDown Keyboard.Event.decodeKeyboardEvent
+              Decode.map HandleKeyDown Keyboard.Event.decodeKeyboardEvent
             , E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
             ]
             { onChange =
@@ -442,8 +461,18 @@ update msg model =
     SetEvalStrategy strategy ->
       setEvalStrategy strategy model
 
+    SaveModel _ ->
+      saveModel model
+
     NoOp ->
       (model, Cmd.none)
+
+
+saveModel : Model -> (Model, Cmd Msg)
+saveModel model =
+  ( model
+  , saveModelPort <| encodeModel model
+  )
 
 
 setEvalStrategy : EvalStrategy -> Model -> (Model, Cmd Msg)
@@ -749,7 +778,10 @@ evalDef strategy otherDefs currentIndex srcs =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Browser.Events.onResize (\width _ -> HandleOrientation width)
+  Sub.batch
+    [ Browser.Events.onResize (\width _ -> HandleOrientation width)
+    , pageWillClosePort SaveModel
+    ]
 
 
 insertToList : Int -> a -> List a -> List a
@@ -759,3 +791,72 @@ insertToList index element list =
       List.Extra.splitAt index list
   in
   before ++ (element :: after)
+
+
+decodeModel : Decoder Model
+decodeModel =
+  Field.require "cells" (Decode.list Decode.string) <| \srcs ->
+  Field.require "activeCellIndex" Decode.int <| \activeCellIndex ->
+  Field.require "evalStrategy" decodeEvalStrategy <| \evalStrategy ->
+
+  Decode.succeed <|
+    evalAllCells
+    { cells =
+      Dict.fromList <|
+      List.indexedMap
+        (\index src ->
+          (index, (src, Err ""))
+        )
+        srcs
+    , activeCellIndex =
+      activeCellIndex
+    , evalStrategy =
+      evalStrategy
+    , orientation =
+      Landscape
+    , popUp =
+      NoPopUp
+    }
+
+
+decodeEvalStrategy : Decoder EvalStrategy
+decodeEvalStrategy =
+  Decode.string |>
+  Decode.andThen
+    (\str ->
+      case str of
+        "CallByValue" ->
+          Decode.succeed CallByValue
+        
+        "CallByName" ->
+          Decode.succeed CallByName
+        
+        _ ->
+          Decode.fail "Invalid evaluation strategy" 
+    )
+
+
+encodeModel : Model -> Encode.Value
+encodeModel model =
+  --  { cells : Dict Int Cell
+  -- , activeCellIndex : Int
+  -- , evalStrategy : EvalStrategy
+  -- , orientation : Orientation
+  -- , popUp : PopUp
+  -- }
+  Encode.object
+    [ ( "cells", Encode.list Encode.string <| List.map Tuple.first <| Dict.values model.cells )
+    , ( "activeCellIndex", Encode.int model.activeCellIndex )
+    , ( "evalStrategy", encodeEvalStrategy model.evalStrategy )
+    ]
+
+
+encodeEvalStrategy : EvalStrategy -> Encode.Value
+encodeEvalStrategy strategy =
+  Encode.string <|
+  case strategy of
+    CallByValue ->
+      "CallByValue"
+    
+    CallByName ->
+      "CallByName"

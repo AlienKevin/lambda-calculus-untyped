@@ -8,7 +8,19 @@
   <script src="./elm.js"></script>
   <main></main>
   <script>
-    var app = Elm.LambdaRepl.init({node: document.querySelector("main")})
+    var storageKey = "lambda-calculus-repl";
+    var savedModel = localStorage.getItem(storageKey);
+
+    var app = Elm.LambdaRepl.init({node: document.querySelector("main"), flags: savedModel});
+
+    app.ports.saveModelPort.subscribe(function(modelJson) {
+      var modelStr = JSON.stringify(modelJson);
+      localStorage.setItem(storageKey, modelStr);
+    });
+
+    window.addEventListener("beforeunload", function() {
+      app.ports.pageWillClosePort.send(null);
+    });
   </script>
 </body>
 </html>

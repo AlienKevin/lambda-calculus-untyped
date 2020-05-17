@@ -27,6 +27,7 @@ import Element.Background as Background
 import FeatherIcons
 import List.Extra
 import Array
+import Time
 
 
 port saveModelPort : Encode.Value -> Cmd msg
@@ -39,6 +40,7 @@ type alias Model =
   , evalStrategy : EvalStrategy
   , orientation : Orientation
   , popUp : PopUp
+  , toolTip : ToolTip
   }
 
 
@@ -50,7 +52,8 @@ type Msg
   | HandleOrientation Int
   | SetPopUp PopUp
   | SetEvalStrategy EvalStrategy
-  | SaveModel ()
+  | SaveModel
+  | SetToolTip ToolTip
   | NoOp
 
 
@@ -67,6 +70,13 @@ type PopUp
   = HelpPopUp
   | SettingsPopUp
   | NoPopUp
+
+
+type ToolTip
+  = SavedToolTip
+  | SettingsToolTip
+  | HelpToolTip
+  | NoToolTip
 
 
 colors =
@@ -118,6 +128,8 @@ init savedModelStr =
         Landscape
       , popUp =
         NoPopUp
+      , toolTip =
+        NoToolTip
       }
     
     initialModel =
@@ -146,12 +158,12 @@ view model =
       ]
     , E.width ( E.fill |> E.maximum 700 )
     , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
-    , E.inFront <| viewOpenPopUpButtons
+    , E.inFront <| viewToolButtons model
     , E.inFront <| viewPopUp model
+    , Font.size <| scale model.orientation 16
     ] ++ case model.orientation of
       Landscape ->
         [ E.padding 30
-        , Font.size 16
         ]
       
       Portrait ->
@@ -165,7 +177,6 @@ view model =
           , bottom =
             10
           }
-        , Font.size 20
         ]
   ) <|
   E.column
@@ -262,15 +273,59 @@ viewHelpPopUp =
   ]
 
 
-viewOpenPopUpButtons : E.Element Msg
-viewOpenPopUpButtons =
+viewToolButtons : Model -> E.Element Msg
+viewToolButtons model =
   E.row
   [ E.alignRight
-  , E.spacing 10
+  , E.spacing 20
+  , E.paddingXY 10 10
   ]
-  [ viewHelpButton
-  , viewSettingsButton
+  [ viewSavedButton model
+  , viewHelpButton model
+  , viewSettingsButton model
   ]
+
+
+viewSavedButton : Model -> E.Element Msg
+viewSavedButton model =
+  E.el
+  [ E.paddingEach
+    { left =
+      0
+    , right =
+      10
+    , top =
+      0
+    , bottom =
+      0
+    }
+  , Element.Events.onMouseEnter <| SetToolTip SavedToolTip
+  , Element.Events.onMouseLeave <| SetToolTip NoToolTip
+  , E.below <|
+    case model.toolTip of
+      SavedToolTip ->
+        E.el
+        [ E.htmlAttribute <| Html.Attributes.style "position" "relative"
+        , E.htmlAttribute <| Html.Attributes.style "right" <| String.fromInt <| scale model.orientation 30
+        ] <|
+        E.text "Repl Saved"
+      
+      _ ->
+        E.none
+  ] <|
+  E.el
+  [ E.onRight <|
+    E.html
+    ( FeatherIcons.check
+    |> FeatherIcons.withSize 12
+    |> FeatherIcons.withStrokeWidth 4
+    |> FeatherIcons.toHtml []
+    )
+  ] <|
+  E.html
+    ( FeatherIcons.save
+    |> FeatherIcons.toHtml [ Html.Attributes.style "margin-right" "-3px" ]
+    )
 
 
 viewClosePopUpButton : E.Element Msg
@@ -289,11 +344,23 @@ viewClosePopUpButton =
     }
 
 
-viewSettingsButton : E.Element Msg
-viewSettingsButton =
+viewSettingsButton : Model -> E.Element Msg
+viewSettingsButton model =
   Input.button
     [ E.alignRight
-    , E.padding 10
+    , Element.Events.onMouseEnter <| SetToolTip SettingsToolTip
+    , Element.Events.onMouseLeave <| SetToolTip NoToolTip
+    , E.below <|
+      case model.toolTip of
+        SettingsToolTip ->
+          E.el
+          [ E.htmlAttribute <| Html.Attributes.style "position" "relative"
+          , E.htmlAttribute <| Html.Attributes.style "right" <| String.fromInt <| scale model.orientation 40
+          ] <|
+          E.text "Settings"
+        
+        _ ->
+          E.none
     ]
     { onPress =
       Just <| SetPopUp SettingsPopUp
@@ -305,11 +372,23 @@ viewSettingsButton =
     }
 
 
-viewHelpButton : E.Element Msg
-viewHelpButton =
+viewHelpButton : Model -> E.Element Msg
+viewHelpButton model =
   Input.button
     [ E.alignRight
-    , E.padding 10
+    , Element.Events.onMouseEnter <| SetToolTip HelpToolTip
+    , Element.Events.onMouseLeave <| SetToolTip NoToolTip
+    , E.below <|
+      case model.toolTip of
+        HelpToolTip ->
+          E.el
+          [ E.htmlAttribute <| Html.Attributes.style "position" "relative"
+          , E.htmlAttribute <| Html.Attributes.style "right" <| String.fromInt <| scale model.orientation 5
+          ] <|
+          E.text "Help"
+        
+        _ ->
+          E.none
     ]
     { onPress =
       Just <| SetPopUp HelpPopUp
@@ -461,11 +540,24 @@ update msg model =
     SetEvalStrategy strategy ->
       setEvalStrategy strategy model
 
-    SaveModel _ ->
+    SaveModel ->
       saveModel model
+
+    SetToolTip toolTip ->
+      setToolTip toolTip model
 
     NoOp ->
       (model, Cmd.none)
+
+
+setToolTip : ToolTip -> Model -> (Model, Cmd Msg)
+setToolTip toolTip model =
+  ( { model
+      | toolTip =
+        toolTip
+    }
+  , Cmd.none
+  )
 
 
 saveModel : Model -> (Model, Cmd Msg)
@@ -780,7 +872,8 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
     [ Browser.Events.onResize (\width _ -> HandleOrientation width)
-    , pageWillClosePort SaveModel
+    , pageWillClosePort (\_ -> SaveModel)
+    , Time.every 1000 (\_ -> SaveModel)
     ]
 
 
@@ -816,6 +909,8 @@ decodeModel =
       Landscape
     , popUp =
       NoPopUp
+    , toolTip =
+      NoToolTip
     }
 
 
@@ -860,3 +955,13 @@ encodeEvalStrategy strategy =
     
     CallByName ->
       "CallByName"
+
+
+scale : Orientation -> Int -> Int
+scale  orientation value =
+  case orientation of
+    Portrait ->
+      round <| toFloat value * 1.25
+    
+    Landscape ->
+      value

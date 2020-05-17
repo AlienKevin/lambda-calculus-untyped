@@ -32,7 +32,7 @@ type alias Model =
   , activeCellIndex : Int
   , evalStrategy : EvalStrategy
   , orientation : Orientation
-  , showHelpWindow : Bool
+  , popUp : PopUp
   }
 
 
@@ -42,8 +42,8 @@ type Msg
   | AddCell
   | HandleKeyDown KeyboardEvent
   | HandleOrientation Int
-  | OpenHelpWindow
-  | CloseHelpWindow
+  | SetPopUp PopUp
+  | SetEvalStrategy EvalStrategy
   | NoOp
 
 
@@ -54,6 +54,12 @@ type alias Cell =
 type Orientation
   = Portrait
   | Landscape
+
+
+type PopUp
+  = HelpPopUp
+  | SettingsPopUp
+  | NoPopUp
 
 
 colors =
@@ -68,6 +74,15 @@ styles =
     ]
   , subtitle =
     [ Font.italic
+    ]
+  , popUp =
+    [ E.centerX
+    , E.centerY
+    , E.padding 30
+    , E.spacing 10
+    , Background.color colors.lightGrey
+    , Border.rounded 10
+    , E.inFront viewClosePopUpButton
     ]
   }
 
@@ -92,8 +107,8 @@ init _ =
       CallByValue
     , orientation =
       Landscape
-    , showHelpWindow =
-      False
+    , popUp =
+      NoPopUp
     }
   , Task.perform (HandleOrientation << round << .width << .viewport) Browser.Dom.getViewport
   )
@@ -112,8 +127,8 @@ view model =
       ]
     , E.width ( E.fill |> E.maximum 700 )
     , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
-    , E.inFront <| viewHelpButton model
-    , E.inFront <| viewHelpWindow model
+    , E.inFront <| viewOpenPopUpButtons
+    , E.inFront <| viewPopUp model
     ] ++ case model.orientation of
       Landscape ->
         [ E.padding 30
@@ -121,7 +136,16 @@ view model =
         ]
       
       Portrait ->
-        [ E.padding 10
+        [ E.paddingEach
+          { left =
+            10
+          , right =
+            10
+          , top = 
+            45
+          , bottom =
+            10
+          }
         , Font.size 20
         ]
   ) <|
@@ -136,71 +160,108 @@ view model =
     (Dict.values model.cells)
 
 
-viewHelpWindow : Model -> E.Element Msg
-viewHelpWindow model =
-  if model.showHelpWindow then
-    E.column
-    [ E.centerX
-    , E.centerY
-    , E.padding 30
-    , E.spacing 10
-    , Background.color colors.lightGrey
-    , E.inFront viewCloseHelpButton
-    , Border.rounded 10
-    ]
-    [ E.el styles.title <| E.text "Help"
-    , E.el styles.subtitle <| E.text "Keyboard Shortcuts"
-    , E.row
-      []
-      [ E.html
-        ( FeatherIcons.arrowUp
-        |> FeatherIcons.toHtml
-          [ Html.Attributes.style "margin-right" "20px" ]
-        )
-      , E.text "Go to previous cell"
-      ]
-    , E.row
-      []
-      [ E.html
-        ( FeatherIcons.arrowDown
-        |> FeatherIcons.toHtml
-          [ Html.Attributes.style "margin-right" "20px" ]
-        )
-      , E.text "Go to next cell"
-      ]
-    , E.row
-      []
-      [ E.html
-        ( FeatherIcons.cornerDownLeft
-        |> FeatherIcons.toHtml
-          [ Html.Attributes.style "margin-right" "20px" ]
-        )
-      , E.text "Add newline"
-      ]
-    , E.row
-      [ E.spacing 5 ]
-      [ E.text "Ctrl"
-      , E.text "+"
-      , E.html
-        ( FeatherIcons.cornerDownLeft
-        |> FeatherIcons.toHtml
-          [ Html.Attributes.style "margin-right" "20px"
-          , Html.Attributes.style "margin-left" "5px"
-          ]
-        )
-      , E.text "Add cell"
-      ]
-    ]
-  else
-    E.none
+viewPopUp : Model -> E.Element Msg
+viewPopUp model =
+  case model.popUp of
+    HelpPopUp ->
+      viewHelpPopUp
+    
+    SettingsPopUp ->
+      viewSettingsPopUp model
+    
+    NoPopUp ->
+      E.none
 
 
-viewCloseHelpButton : E.Element Msg
-viewCloseHelpButton =
+viewSettingsPopUp : Model -> E.Element Msg
+viewSettingsPopUp model =
+  E.column
+  styles.popUp
+  [ E.el styles.title <| E.text "Settings"
+  , E.el styles.subtitle <| E.text "Evaluation Strategy"
+  , Input.radio
+    [ E.padding 10
+    , E.spacing 20
+    ]
+    { onChange = SetEvalStrategy
+    , selected = Just model.evalStrategy
+    , label = Input.labelHidden "Evaluation Strategy"
+    , options =
+        [ Input.option CallByValue (E.text "call by value")
+        , Input.option CallByName (E.text "call by name")
+        ]
+    }
+  ]
+
+
+viewHelpPopUp : E.Element Msg
+viewHelpPopUp =
+  E.column
+  styles.popUp
+  [ E.el styles.title <| E.text "Help"
+  , E.el styles.subtitle <| E.text "Keyboard Shortcuts"
+  , E.row
+    []
+    [ E.html
+      ( FeatherIcons.arrowUp
+      |> FeatherIcons.toHtml
+        [ Html.Attributes.style "margin-right" "20px" ]
+      )
+    , E.text "Go to previous cell"
+    ]
+  , E.row
+    []
+    [ E.html
+      ( FeatherIcons.arrowDown
+      |> FeatherIcons.toHtml
+        [ Html.Attributes.style "margin-right" "20px" ]
+      )
+    , E.text "Go to next cell"
+    ]
+  , E.row
+    []
+    [ E.html
+      ( FeatherIcons.cornerDownLeft
+      |> FeatherIcons.toHtml
+        [ Html.Attributes.style "margin-right" "20px" ]
+      )
+    , E.text "Add newline"
+    ]
+  , E.row
+    [ E.spacing 5 ]
+    [ E.text "Ctrl"
+    , E.text "+"
+    , E.html
+      ( FeatherIcons.cornerDownLeft
+      |> FeatherIcons.toHtml
+        [ Html.Attributes.style "margin-right" "20px"
+        , Html.Attributes.style "margin-left" "5px"
+        ]
+      )
+    , E.text "Add cell"
+    ]
+  ]
+
+
+viewOpenPopUpButtons : E.Element Msg
+viewOpenPopUpButtons =
+  E.row
+  [ E.alignRight
+  , E.spacing 10
+  ]
+  [ viewHelpButton
+  , viewSettingsButton
+  ]
+
+
+viewClosePopUpButton : E.Element Msg
+viewClosePopUpButton =
   Input.button
-    [ E.alignRight ]
+    [ E.alignRight
+    , E.padding 10
+    ]
     { onPress =
-      Just CloseHelpWindow
+      Just <| SetPopUp NoPopUp
     , label =
       E.html
         ( FeatherIcons.xCircle
@@ -209,14 +270,30 @@ viewCloseHelpButton =
     }
 
 
-viewHelpButton : Model -> E.Element Msg
-viewHelpButton model =
+viewSettingsButton : E.Element Msg
+viewSettingsButton =
   Input.button
     [ E.alignRight
     , E.padding 10
     ]
     { onPress =
-      Just OpenHelpWindow
+      Just <| SetPopUp SettingsPopUp
+    , label =
+      E.html
+        ( FeatherIcons.settings
+        |> FeatherIcons.toHtml []
+        )
+    }
+
+
+viewHelpButton : E.Element Msg
+viewHelpButton =
+  Input.button
+    [ E.alignRight
+    , E.padding 10
+    ]
+    { onPress =
+      Just <| SetPopUp HelpPopUp
     , label =
       E.html
         ( FeatherIcons.helpCircle
@@ -359,32 +436,32 @@ update msg model =
     HandleOrientation width ->
       handleOrientation width model
 
-    OpenHelpWindow ->
-      openHelpWindow model
+    SetPopUp popUp ->
+      setPopUp popUp model
 
-    CloseHelpWindow ->
-      closeHelpWindow model
-      
+    SetEvalStrategy strategy ->
+      setEvalStrategy strategy model
+
     NoOp ->
       (model, Cmd.none)
 
 
-closeHelpWindow : Model -> (Model, Cmd Msg)
-closeHelpWindow model =
-  ( { model
-      | showHelpWindow =
-        False
+setEvalStrategy : EvalStrategy -> Model -> (Model, Cmd Msg)
+setEvalStrategy strategy model =
+  ( evalAllCells
+    { model
+      | evalStrategy =
+        strategy
     }
   , Cmd.none
   )
 
 
-
-openHelpWindow : Model -> (Model, Cmd Msg)
-openHelpWindow model =
+setPopUp : PopUp -> Model -> (Model, Cmd Msg)
+setPopUp popUp model =
   ( { model
-      | showHelpWindow =
-        True
+      | popUp =
+        popUp
     }
   , Cmd.none
   )

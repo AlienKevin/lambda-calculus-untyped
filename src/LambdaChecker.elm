@@ -27,27 +27,17 @@ checkDefs defs =
   Tuple.first <|
   List.Extra.indexedFoldl
     (\index def (problems, names) ->
-      let
-        _ = Debug.log "AL -> index" <| index
-      in
       if isFakeLocated def.name then
         (problems, names)
       else
         Tuple.mapFirst ((++) <| checkExpr (Dict.filter (\_ name -> name /= def.name) allNames) def.expr.value)
         ( case Dict.get def.name.value names of
           Nothing ->
-            let
-              _ = Debug.log "AL -> def.name.value" <| def.name.value
-              _ = Debug.log "AL -> index" <| index
-            in
             ( problems
             , Dict.insert def.name.value (index, def.name) names
             )
 
           Just (previousIndex, previousName) ->
-            let
-              _ = Debug.log "AL -> previousIndex" <| previousIndex
-            in
             ( DuplicatedDefinition (previousIndex, previousName) (index, def.name) :: problems
             , names
             )
@@ -145,6 +135,7 @@ showProblemHelper srcs currentIndex problem =
 sortDefs : List Def -> List Def
 sortDefs defs =
   let
+    _ = Debug.log "AL -> dependencies" <| dependencies
     dependencies =
       List.foldl
       (\def deps ->
@@ -156,6 +147,7 @@ sortDefs defs =
       Dict.empty
       defs
     
+    _ = Debug.log "AL -> sortedNames" <| sortedNames
     sortedNames =
       sortDependencies dependencies
   in
@@ -173,15 +165,23 @@ sortDefs defs =
 
 getFreeVariables : Expr -> List (Located String)
 getFreeVariables expr =
+  getFreeVariablesHelper Set.empty expr
+
+
+getFreeVariablesHelper : Set String -> Expr -> List (Located String)
+getFreeVariablesHelper boundVariables expr =
   case expr of
     EVariable name ->
-      [ name ]
+      if Set.member name.value boundVariables then
+        []
+      else
+        [ name ]
     
     EAbstraction boundVar innerExpr ->
-      getFreeVariables innerExpr.value
+      getFreeVariablesHelper (Set.insert boundVar.value boundVariables) innerExpr.value
     
     EApplication func arg ->
-      getFreeVariables func.value ++ getFreeVariables arg.value
+      getFreeVariablesHelper boundVariables func.value ++ getFreeVariablesHelper boundVariables arg.value
 
 
 type alias Dependencies =

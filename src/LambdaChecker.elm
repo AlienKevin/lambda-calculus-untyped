@@ -135,7 +135,6 @@ showProblemHelper srcs currentIndex problem =
 sortDefs : List Def -> List Def
 sortDefs defs =
   let
-    _ = Debug.log "AL -> dependencies" <| dependencies
     dependencies =
       List.foldl
       (\def deps ->
@@ -147,7 +146,6 @@ sortDefs defs =
       Dict.empty
       defs
     
-    _ = Debug.log "AL -> sortedNames" <| sortedNames
     sortedNames =
       sortDependencies dependencies
   in

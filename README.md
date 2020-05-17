@@ -14,3 +14,17 @@ Try repl [here](https://alienkevin.github.io/lambda-calculus-untyped/)!
 
 # License
 MIT
+
+# Change Log
+
+## Release v0.2.0
+
+* Evaluate all cells when editing one cell
+* Track cell index in checker for problems like duplicated definition
+* Enforce end of def and expr when parseDef and parseExpr
+* Replace line prompt with cell index
+* Place add cell button at the active cell
+
+# Release v0.1.0
+
+* Basic repl support

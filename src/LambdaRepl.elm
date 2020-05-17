@@ -577,7 +577,6 @@ editCell newSrc model =
 evalAllCells : Model -> Model
 evalAllCells model =
   let
-    _ = Debug.log "AL -> unevaluatedCells" <| unevaluatedCells
     unevaluatedCells =
       Dict.map
         (\_ (src, _) ->
@@ -590,7 +589,6 @@ evalAllCells model =
         )
         model.cells
 
-    
     defs =
       List.foldl
         (\(_, result) definitions ->
@@ -603,26 +601,14 @@ evalAllCells model =
         )
         []
         (Dict.values unevaluatedCells)
-
     
     sortedDefs =
       LambdaChecker.sortDefs defs
-
-
-    _ = Debug.log "AL -> sortedDefs" <| sortedDefs
-    _ = Debug.log "AL -> List.length sortedDefs" <| List.length sortedDefs
-
-    _ = Debug.log "AL -> indexedSrcs" <| indexedSrcs
 
     indexedSrcs =
       Array.toList <|
       Dict.foldr
         (\index (source, result) sources ->
-          let
-            _ = Debug.log "AL -> index" <| index
-            _ = Debug.log "AL -> sources" <| sources
-            _ = Debug.log "AL -> result" <| result
-          in
           case result of
             Err _ ->
               Array.push (index, source) sources
@@ -647,9 +633,6 @@ evalAllCells model =
       List.foldl
       (\(index, src) (cells, prevDefs) ->
         let
-          _ = Debug.log "AL -> index" <| index
-          _ = Debug.log "AL -> src" <| src
-          _ = Debug.log "AL -> result" <| result
           result =
             evalDef model.evalStrategy prevDefs index srcs
         in

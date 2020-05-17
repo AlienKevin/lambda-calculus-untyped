@@ -1,4 +1,4 @@
-module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, sortDefs)
+module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, sortDefs, Problem(..))
 
 
 import LambdaParser exposing (fakeDef, Def, Expr(..))

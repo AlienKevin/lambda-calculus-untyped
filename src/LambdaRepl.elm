@@ -246,7 +246,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
       E.el
       [ E.paddingEach
         { left =
-          40
+          72
         , right =
           0
         , top =
@@ -274,16 +274,28 @@ viewCell activeCellIndex currentCellIndex (src, result) =
     ]
     [ E.row
       [ E.width E.fill]
-      [ E.html
-        ( FeatherIcons.chevronRight
-        |> FeatherIcons.toHtml
-          [ Html.Attributes.style "margin-right" "5px"
-          , if activeCellIndex == currentCellIndex then
+      [ E.el
+        [ E.paddingEach
+          { left =
+            0
+          , right =
+            10
+          , top =
+            0
+          , bottom =
+            0
+          }
+        , E.width <| E.px 60
+        ] <|
+        E.el
+        [ E.centerX
+        , E.htmlAttribute <|
+          if activeCellIndex == currentCellIndex then
             Html.Attributes.style "color" "black"
           else
             Html.Attributes.style "color" "grey"
-          ]
-        )
+        ] <|
+        E.text <| "[" ++ String.fromInt (currentCellIndex + 1) ++ "]"
       , if activeCellIndex == currentCellIndex then
           Input.multiline
             [ E.width E.fill

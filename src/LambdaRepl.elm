@@ -242,14 +242,28 @@ viewCell : Int -> Int -> (String, Result String Def) -> E.Element Msg
 viewCell activeCellIndex currentCellIndex (src, result) =
   let
     resultDisplay =
+      E.el
+      [ E.paddingEach
+        { left =
+          40
+        , right =
+          0
+        , top =
+          0
+        , bottom =
+          10
+        }
+      ] <|
       case result of
         Ok def ->
-          E.text <| "  " ++ LambdaParser.showDef def
+          E.text <| LambdaParser.showDef def
         
         Err msg ->
           E.html <|
           Html.pre
-            [ Html.Attributes.style "white-space" "pre-wrap" ]
+            [ Html.Attributes.style "white-space" "pre-wrap"
+            , Html.Attributes.style "margin" "0"
+            ]
             [ Html.text msg
             ]
   in
@@ -259,7 +273,16 @@ viewCell activeCellIndex currentCellIndex (src, result) =
     ]
     [ E.row
       [ E.width E.fill]
-      [ E.text <| "> "
+      [ E.html
+        ( FeatherIcons.chevronRight
+        |> FeatherIcons.toHtml
+          [ Html.Attributes.style "margin-right" "5px"
+          , if activeCellIndex == currentCellIndex then
+            Html.Attributes.style "color" "black"
+          else
+            Html.Attributes.style "color" "grey"
+          ]
+        )
       , if activeCellIndex == currentCellIndex then
           Input.multiline
             [ E.width E.fill

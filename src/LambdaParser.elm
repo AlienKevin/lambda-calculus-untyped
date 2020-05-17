@@ -259,7 +259,8 @@ showProblems src deadEnds =
     deadEndGroups =
       List.Extra.groupWhile (\d1 d2 -> d1.row == d2.row && d1.col == d2.col) <| deadEnds
   in
-  String.join "\n" <| List.map (showProblemsHelper src) deadEndGroups
+  "-- PARSE PROBLEM\n\n"
+  ++ (String.join "\n" <| List.map (showProblemsHelper src) deadEndGroups)
 
 
 showProblemsHelper : String -> ((DeadEnd Context Problem), List (DeadEnd Context Problem)) -> String

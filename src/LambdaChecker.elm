@@ -16,13 +16,18 @@ type Problem
 checkDefs : List Def -> List Problem
 checkDefs defs =
   let
-    sortedDefs =
-      sortDefs defs
+    allNames =
+      List.foldl
+        (\def names ->
+          Dict.insert def.name.value def.name names
+        )
+        Dict.empty
+        defs
   in
   Tuple.first <|
   List.foldl
     (\def (problems, names) ->
-      Tuple.mapFirst ((++) <| checkExpr names def.expr.value)
+      Tuple.mapFirst ((++) <| checkExpr (Dict.filter (\_ name -> name /= def.name) allNames) def.expr.value)
       ( case Dict.get def.name.value names of
         Nothing ->
           ( problems
@@ -36,7 +41,7 @@ checkDefs defs =
       )
     )
     ([], Dict.empty)
-    sortedDefs
+    defs
 
 
 checkDef : Dict String (Located String) -> Def -> List Problem

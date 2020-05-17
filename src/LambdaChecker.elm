@@ -3,13 +3,13 @@ module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, sor
 
 import LambdaParser exposing (fakeDef, Def, Expr(..))
 import Dict exposing (Dict)
-import Location exposing (showLocation, Located)
+import Location exposing (showLocation, isFakeLocated, Located)
 import Set exposing (Set)
 import List.Extra
 
 
 type Problem
-  = DuplicatedDefinition (Located String) (Located String)
+  = DuplicatedDefinition (Int, Located String) (Int, Located String)
   | UndefinedVariable (Located String)
 
 
@@ -25,20 +25,33 @@ checkDefs defs =
         defs
   in
   Tuple.first <|
-  List.foldl
-    (\def (problems, names) ->
-      Tuple.mapFirst ((++) <| checkExpr (Dict.filter (\_ name -> name /= def.name) allNames) def.expr.value)
-      ( case Dict.get def.name.value names of
-        Nothing ->
-          ( problems
-          , Dict.insert def.name.value def.name names
-          )
+  List.Extra.indexedFoldl
+    (\index def (problems, names) ->
+      let
+        _ = Debug.log "AL -> index" <| index
+      in
+      if isFakeLocated def.name then
+        (problems, names)
+      else
+        Tuple.mapFirst ((++) <| checkExpr (Dict.filter (\_ name -> name /= def.name) allNames) def.expr.value)
+        ( case Dict.get def.name.value names of
+          Nothing ->
+            let
+              _ = Debug.log "AL -> def.name.value" <| def.name.value
+              _ = Debug.log "AL -> index" <| index
+            in
+            ( problems
+            , Dict.insert def.name.value (index, def.name) names
+            )
 
-        Just previousName ->
-          ( DuplicatedDefinition previousName def.name :: problems
-          , names
-          )
-      )
+          Just (previousIndex, previousName) ->
+            let
+              _ = Debug.log "AL -> previousIndex" <| previousIndex
+            in
+            ( DuplicatedDefinition (previousIndex, previousName) (index, def.name) :: problems
+            , names
+            )
+        )
     )
     ([], Dict.empty)
     defs
@@ -66,30 +79,62 @@ checkExpr names expr =
       ++ checkExpr names arg.value
 
 
-showProblems : String -> List Problem -> String
-showProblems src problems =
+showProblems : List String -> Int -> List Problem -> String
+showProblems srcs currentIndex problems =
   String.join "\n\n" <|
   List.map
     (\problem ->
-      showProblemHelper src problem
+      showProblemHelper srcs currentIndex problem
     )
     problems
 
 
-showProblemHelper : String -> Problem -> String
-showProblemHelper src problem =
+showProblemHelper : List String -> Int -> Problem -> String
+showProblemHelper srcs currentIndex problem =
   String.join "\n" <|
   case problem of
-    DuplicatedDefinition d1 d2 ->
+    DuplicatedDefinition (index1, name1) (index2, name2) ->
+      let
+        indexStr1 =
+          "[" ++ String.fromInt (index1 + 1) ++ "] "
+
+        src1 =
+          Maybe.withDefault "" <| -- impossible
+          List.Extra.getAt index1 srcs
+        
+        location1 =
+          indexStr1
+          ++ ( String.replace "\n" ("\n" ++ String.repeat (String.length indexStr1) " ")
+            <| showLocation src1 name1
+          )
+
+        indexStr2 =
+          "[" ++ String.fromInt (index2 + 1) ++ "] "
+
+        src2 =
+          Maybe.withDefault "" <| -- impossible
+          List.Extra.getAt index2 srcs
+        
+        location2 =
+          indexStr2
+          ++ ( String.replace "\n" ("\n" ++ String.repeat (String.length indexStr2) " ")
+            <| showLocation src2 name2
+          )
+      in
       [ "-- DUPLICATED DEFINITION\n"
-      , "I found that you defined `" ++ d1.value ++ "` twice. It first appeared here:"
-      , showLocation src d1
+      , "I found that you defined `" ++ name1.value ++ "` twice. It first appeared here:"
+      , location1
       , "It then appeared a second time here:"
-      , showLocation src d2
+      , location2
       , "Hint: Try renaming one of them to avoid duplicated definition."
       ]
     
     UndefinedVariable name ->
+      let
+        src =
+          Maybe.withDefault "" <| -- impossible
+          List.Extra.getAt currentIndex srcs
+      in
       [ "-- UNDEFINED VARIABLE\n"
       , "I found an undefined variable `" ++ name.value ++ "` here:"
       , showLocation src name

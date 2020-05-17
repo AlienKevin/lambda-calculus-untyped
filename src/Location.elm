@@ -33,6 +33,12 @@ fakeLocated value =
   }
 
 
+isFakeLocated : Located a -> Bool
+isFakeLocated located =
+  (located.from == (-1, -1))
+  && (located.to == (-1, -1))
+
+
 showLocation : String -> Located a -> String
 showLocation src located =
   let

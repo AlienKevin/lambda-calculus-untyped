@@ -16,13 +16,13 @@ suite =
           """id = \\x. x
 id = \\y. y
 """
-        [DuplicatedDefinition { from = (1,1), to = (1,3), value = "id" } { from = (2,1), to = (2,3), value = "id" }]
+        [DuplicatedDefinition (0, { from = (1,1), to = (1,3), value = "id" }) (1, { from = (2,1), to = (2,3), value = "id" })]
       , test "two duplicates"
           """id = \\x. x
 id = \\y. y
 id = \\z. z
 """
-        [DuplicatedDefinition { from = (1,1), to = (1,3), value = "id" } { from = (3,1), to = (3,3), value = "id" },DuplicatedDefinition { from = (1,1), to = (1,3), value = "id" } { from = (2,1), to = (2,3), value = "id" }]
+        [DuplicatedDefinition (0, { from = (1,1), to = (1,3), value = "id" }) (2, { from = (3,1), to = (3,3), value = "id" }),DuplicatedDefinition (0, { from = (1,1), to = (1,3), value = "id" }) (1, { from = (2,1), to = (2,3), value = "id" })]
       ]
     , describe "Undefined Variable"
       [ test "one undefined variable"

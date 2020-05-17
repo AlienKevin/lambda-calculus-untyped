@@ -12,7 +12,7 @@ import Keyboard.Key
 import Task
 import Json.Decode
 import Dict exposing (Dict)
-import LambdaParser exposing (Def, Expr)
+import LambdaParser exposing (fakeDef, Def, Expr)
 import LambdaChecker
 import LambdaEvaluator exposing (EvalStrategy(..))
 import Location exposing (Located)
@@ -23,6 +23,7 @@ import Element.Border as Border
 import Element.Events
 import Element.Background as Background
 import FeatherIcons
+import List.Extra
 
 
 type alias Model =
@@ -546,7 +547,7 @@ editCell newSrc model =
           (\_ ->
             let
               otherDefs =
-                Dict.foldl
+                Dict.foldr
                   (\index (_, result) others ->
                     if index /= model.activeCellIndex then
                       case result of
@@ -554,14 +555,26 @@ editCell newSrc model =
                           def :: others
                         
                         Err _ ->
-                          others
+                          fakeDef :: others
                     else
-                      others
+                      fakeDef :: others
                   )
                   []
                   model.cells
+              
+              srcs =
+                Dict.foldr
+                  (\index (source, _) sources ->
+                    if index /= model.activeCellIndex then
+                      source :: sources
+                    else
+                      newSrc :: sources
+                  )
+                  []
+                  model.cells
+
             in
-            Just (newSrc, evalDef model.evalStrategy otherDefs newSrc)
+            Just (newSrc, evalDef model.evalStrategy otherDefs model.activeCellIndex srcs)
           )
           model.cells
     }
@@ -569,21 +582,35 @@ editCell newSrc model =
   )
 
 
-evalDef : LambdaEvaluator.EvalStrategy -> List Def -> String -> Result String Def
-evalDef strategy otherDefs src =
+evalDef : LambdaEvaluator.EvalStrategy -> List Def -> Int -> List String -> Result String Def
+evalDef strategy otherDefs currentIndex srcs =
+  let
+    src =
+      Maybe.withDefault "" <| -- impossible
+      List.Extra.getAt currentIndex srcs
+  in
   case LambdaParser.parseDef src of
     Err problems ->
       Err <| LambdaParser.showProblems src problems
     
     Ok def ->
-      case LambdaChecker.checkDefs <| def :: otherDefs of
+      case LambdaChecker.checkDefs <| insertToList currentIndex def otherDefs of
         [] ->
           Ok <| LambdaEvaluator.evalDef strategy otherDefs def
 
         problems ->
-          Err <| LambdaChecker.showProblems src problems
+          Err <| LambdaChecker.showProblems srcs currentIndex problems
   
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Browser.Events.onResize (\width _ -> HandleOrientation width)
+
+
+insertToList : Int -> a -> List a -> List a
+insertToList index element list =
+  let
+    (before, after) =
+      List.Extra.splitAt index list
+  in
+  before ++ (element :: after)

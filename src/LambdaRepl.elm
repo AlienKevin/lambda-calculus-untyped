@@ -24,6 +24,7 @@ import Element.Events
 import Element.Background as Background
 import FeatherIcons
 import List.Extra
+import Array
 
 
 type alias Model =
@@ -552,46 +553,111 @@ focusCell index =
 
 editCell : String -> Model -> (Model, Cmd Msg)
 editCell newSrc model =
-  ( { model
+  ( evalAllCells
+    { model
       | cells =
         Dict.update
           model.activeCellIndex
           (\_ ->
-            let
-              otherDefs =
-                Dict.foldr
-                  (\index (_, result) others ->
-                    if index /= model.activeCellIndex then
-                      case result of
-                        Ok def ->
-                          def :: others
-                        
-                        Err _ ->
-                          fakeDef :: others
-                    else
-                      fakeDef :: others
-                  )
-                  []
-                  model.cells
-              
-              srcs =
-                Dict.foldr
-                  (\index (source, _) sources ->
-                    if index /= model.activeCellIndex then
-                      source :: sources
-                    else
-                      newSrc :: sources
-                  )
-                  []
-                  model.cells
-
-            in
-            Just (newSrc, evalDef model.evalStrategy otherDefs model.activeCellIndex srcs)
+            Just (newSrc, Ok fakeDef) -- only need to update src
           )
           model.cells
     }
   , Cmd.none
   )
+
+
+evalAllCells : Model -> Model
+evalAllCells model =
+  let
+    _ = Debug.log "AL -> unevaluatedCells" <| unevaluatedCells
+    unevaluatedCells =
+      Dict.map
+        (\_ (src, _) ->
+          case LambdaParser.parseDef src of
+            Err _ ->
+              (src, Err "")
+            
+            Ok def ->
+              (src, Ok def)
+        )
+        model.cells
+
+    
+    defs =
+      List.foldl
+        (\(_, result) definitions ->
+          case result of
+            Err _ ->
+              definitions
+            
+            Ok def ->
+              def :: definitions
+        )
+        []
+        (Dict.values unevaluatedCells)
+
+    
+    sortedDefs =
+      LambdaChecker.sortDefs defs
+
+
+    _ = Debug.log "AL -> sortedDefs" <| sortedDefs
+    _ = Debug.log "AL -> List.length sortedDefs" <| List.length sortedDefs
+
+    _ = Debug.log "AL -> indexedSrcs" <| indexedSrcs
+
+    indexedSrcs =
+      Array.toList <|
+      Dict.foldr
+        (\index (source, result) sources ->
+          let
+            _ = Debug.log "AL -> index" <| index
+            _ = Debug.log "AL -> sources" <| sources
+            _ = Debug.log "AL -> result" <| result
+          in
+          case result of
+            Err _ ->
+              Array.push (index, source) sources
+
+            Ok def ->
+              case List.Extra.elemIndex def sortedDefs of
+                Just sortedIndex ->
+                  Array.set sortedIndex (index, source) sources
+                
+                Nothing -> -- impossible
+                  Array.push (index, source) sources
+        )
+        (Array.repeat (List.length sortedDefs) (0, ""))
+        unevaluatedCells
+    
+    srcs =
+      List.map Tuple.second <| List.sortBy Tuple.first <| indexedSrcs
+  in
+  { model
+    | cells =
+      Tuple.first <|
+      List.foldl
+      (\(index, src) (cells, prevDefs) ->
+        let
+          _ = Debug.log "AL -> index" <| index
+          _ = Debug.log "AL -> src" <| src
+          _ = Debug.log "AL -> result" <| result
+          result =
+            evalDef model.evalStrategy prevDefs index srcs
+        in
+        ( Dict.insert index (src, result) cells
+        , case result of
+          Err _ ->
+            fakeDef :: prevDefs
+          
+          Ok def ->
+            def :: prevDefs
+        )
+      )
+      (Dict.empty, [])
+      indexedSrcs
+  }
 
 
 evalDef : LambdaEvaluator.EvalStrategy -> List Def -> Int -> List String -> Result String Def

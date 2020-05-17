@@ -69,9 +69,9 @@ checkExpr names expr =
 showProblems : String -> List Problem -> String
 showProblems src problems =
   String.join "\n\n" <|
-  List.indexedMap
-    (\index problem ->
-      "#" ++ String.fromInt (index + 1) ++ ": " ++ showProblemHelper src problem
+  List.map
+    (\problem ->
+      showProblemHelper src problem
     )
     problems
 
@@ -81,7 +81,8 @@ showProblemHelper src problem =
   String.join "\n" <|
   case problem of
     DuplicatedDefinition d1 d2 ->
-      [ "I found that you defined `" ++ d1.value ++ "` twice. It first appeared here:"
+      [ "-- DUPLICATED DEFINITION\n"
+      , "I found that you defined `" ++ d1.value ++ "` twice. It first appeared here:"
       , showLocation src d1
       , "It then appeared a second time here:"
       , showLocation src d2
@@ -89,7 +90,8 @@ showProblemHelper src problem =
       ]
     
     UndefinedVariable name ->
-      [ "I found an undefined variable `" ++ name.value ++ "` here:"
+      [ "-- UNDEFINED VARIABLE\n"
+      , "I found an undefined variable `" ++ name.value ++ "` here:"
       , showLocation src name
       , "Hint: Try defining `" ++ name.value ++ "` somewhere."
       ]

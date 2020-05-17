@@ -134,7 +134,6 @@ view model =
       viewCell model.activeCellIndex index result
     )
     (Dict.values model.cells)
-  ++ [ viewAddCellButton ]
 
 
 viewHelpWindow : Model -> E.Element Msg
@@ -229,7 +228,10 @@ viewHelpButton model =
 viewAddCellButton : E.Element Msg
 viewAddCellButton =
   Input.button
-    [ E.centerX ]
+    [ E.centerX
+    , E.alignBottom
+    , E.paddingXY 0 20
+    ]
     { onPress =
       Just AddCell
     , label =
@@ -274,7 +276,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
     , E.width E.fill
     ]
     [ E.row
-      [ E.width E.fill]
+      [ E.width E.fill ]
       [ E.el
         [ E.paddingEach
           { left =
@@ -295,6 +297,11 @@ viewCell activeCellIndex currentCellIndex (src, result) =
             Html.Attributes.style "color" "black"
           else
             Html.Attributes.style "color" "grey"
+        , E.below <|
+          if activeCellIndex == currentCellIndex then
+            viewAddCellButton
+          else
+            E.none
         ] <|
         E.text <| "[" ++ String.fromInt (currentCellIndex + 1) ++ "]"
       , if activeCellIndex == currentCellIndex then

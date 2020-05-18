@@ -397,11 +397,11 @@ showExpr expr =
       )
       ++ " "
       ++ case e2.value of
-        EApplication _ _ ->
-          "(" ++ showExpr e2.value ++ ")"
+        EVariable _ ->
+          showExpr e2.value      
         
         _ ->
-          showExpr e2.value
+          "(" ++ showExpr e2.value ++ ")"
     
     EAbstraction boundVar innerExpr ->
       "\\" ++ boundVar.value ++ ". " ++ showExpr innerExpr.value

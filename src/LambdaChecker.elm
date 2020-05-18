@@ -1,4 +1,4 @@
-module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, sortDefs, Problem(..))
+module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
 
 
 import LambdaParser exposing (fakeDef, Def, Expr(..))
@@ -125,6 +125,37 @@ showProblemHelper srcs currentIndex problem =
           Maybe.withDefault "" <| -- impossible
           List.Extra.getAt currentIndex srcs
       in
+      [ "-- UNDEFINED VARIABLE\n"
+      , "I found an undefined variable `" ++ name.value ++ "` here:"
+      , showLocation src name
+      , "Hint: Try defining `" ++ name.value ++ "` somewhere."
+      ]
+
+
+showProblemsWithSingleSource : String -> List Problem -> String
+showProblemsWithSingleSource src problems =
+  String.join "\n\n" <|
+  List.map
+    (\problem ->
+      showProblemWithSingleSourceHelper src problem
+    )
+    problems
+
+
+showProblemWithSingleSourceHelper : String -> Problem -> String
+showProblemWithSingleSourceHelper src problem =
+  String.join "\n" <|
+  case problem of
+    DuplicatedDefinition (_, d1) (_, d2) ->
+      [ "-- DUPLICATED DEFINITION\n"
+      , "I found that you defined `" ++ d1.value ++ "` twice. It first appeared here:"
+      , showLocation src d1
+      , "It then appeared a second time here:"
+      , showLocation src d2
+      , "Hint: Try renaming one of them to avoid duplicated definition."
+      ]
+    
+    UndefinedVariable name ->
       [ "-- UNDEFINED VARIABLE\n"
       , "I found an undefined variable `" ++ name.value ++ "` here:"
       , showLocation src name

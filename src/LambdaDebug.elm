@@ -19,7 +19,15 @@ source =
 
 -- fls = \\a. \\b. b -- false
 --   """
-  "v = (\\x.x) ((\\x.x) (\\z. (\\x.x) z))"
+  -- "v = (\\x.x) ((\\x.x) (\\z. (\\x.x) z))"
+  """
+pair = \\f. \\s. \\b. b f s
+fst = \\p. p tru
+snd = \\p. p fls
+tru = \\a. \\b. a
+fls = \\a. \\b. b
+v = fst (pair tru fls)
+  """
 
 
 main =
@@ -55,7 +63,7 @@ main =
               ]
             
             problems ->
-              Html.pre [] [ Html.text <| LambdaChecker.showProblems source problems ]
+              Html.pre [] [ Html.text <| LambdaChecker.showProblemsWithSingleSource source problems ]
           ]
     ]
 

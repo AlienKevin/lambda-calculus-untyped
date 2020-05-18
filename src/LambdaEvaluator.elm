@@ -2,10 +2,9 @@ module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
-import LambdaParser exposing (Def, Expr(..))
+import LambdaParser exposing (fakeDef, Def, Expr(..))
 import LambdaChecker exposing (sortDefs)
 import Location exposing (withLocation, Located)
-import Array
 import List.Extra
 
 
@@ -19,20 +18,29 @@ evalDefs strategy defs =
   let
     sortedDefs =
       sortDefs defs
+    
+    resultSortedDefs =
+      Tuple.first <|
+      List.foldl
+        (\def (resultDefs, ctx) ->
+          let
+            resultDef =
+              internalEvalDef strategy ctx def
+          in  
+          ( Dict.insert resultDef.name.value resultDef resultDefs
+          , Dict.insert def.name.value (exprToTerm ctx resultDef.expr) ctx
+          )
+        )
+        (Dict.empty, Dict.empty)
+        sortedDefs
   in
-  Tuple.first <|
-  List.foldl
-    (\def (resultDefs, ctx) ->
-      let
-        resultDef =
-          internalEvalDef strategy ctx def
-      in  
-      ( resultDef :: resultDefs
-      , Dict.insert def.name.value (exprToTerm ctx resultDef.expr) ctx
-      )
+  -- return in the original order, not in the dependency order
+  List.map
+    (\{ name } ->
+      Maybe.withDefault fakeDef <| -- impossible
+      Dict.get name.value resultSortedDefs
     )
-    ([], Dict.empty)
-    sortedDefs
+    defs
 
 
 evalDef : EvalStrategy -> List Def -> Def -> Def

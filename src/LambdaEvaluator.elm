@@ -92,11 +92,8 @@ termToExpr names t =
     
     TmAbstraction boundVar t1 ->
       let
-        newName =
-          indexToName <| List.length names
-        
-        newNames =
-          newName :: names
+        (newNames, newName) =
+          pickNewName names boundVar.value
       in
       EAbstraction (withLocation boundVar newName) <| termToExpr newNames t1
   
@@ -104,23 +101,18 @@ termToExpr names t =
       EApplication (termToExpr names t1) (termToExpr names t2)
 
 
-indexToName : Int -> String
-indexToName n =
+pickNewName : List String -> String -> (List String, String)
+pickNewName names boundVar =
   let
-    letters =
-      Array.fromList [ "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"]
+    newName =
+      if List.member boundVar names then
+        boundVar ++ (String.fromInt <| List.length names)
+      else
+        boundVar  
   in
-  if 0 <= n && n < Array.length letters then
-    Maybe.withDefault "IMPOSSIBLE" <| -- impossible
-      Array.get n letters
-  else
-    let
-      difference =
-        n - Array.length letters
-    in
-    ( Maybe.withDefault "IMPOSSIBLE" <| -- impossible
-      Array.get difference letters
-    ) ++ String.fromInt difference
+  ( newName :: names
+  , newName
+  )
 
 
 exprToTerm : Ctx -> Located Expr -> Located Term

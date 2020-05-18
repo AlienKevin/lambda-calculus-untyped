@@ -24,9 +24,10 @@ source =
 pair = \\f. \\s. \\b. b f s
 fst = \\p. p tru
 snd = \\p. p fls
-tru = \\a. \\b. a
-fls = \\a. \\b. b
+tru = \\t. \\f. t
+fls = \\t. \\f. f
 v = fst (pair tru fls)
+v2 = pair (pair tru fls) (pair fls tru)
   """
 
 

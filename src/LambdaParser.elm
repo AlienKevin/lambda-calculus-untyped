@@ -389,11 +389,11 @@ showExpr expr =
     
     EApplication e1 e2 ->
       ( case e1.value of
-        EVariable _ ->
-          showExpr e1.value
+        EAbstraction _ _ ->
+          "(" ++ showExpr e1.value ++ ")"
         
         _ ->
-          "(" ++ showExpr e1.value ++ ")"
+          showExpr e1.value
       )
       ++ " "
       ++ case e2.value of

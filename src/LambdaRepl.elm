@@ -510,6 +510,7 @@ viewCell activeCellIndex currentCellIndex (src, result) model =
           Html.pre
             [ Html.Attributes.style "white-space" "pre-wrap"
             , Html.Attributes.style "margin" "0"
+            , Html.Attributes.style "color" "tomato"
             ]
             [ Html.text msg
             ]

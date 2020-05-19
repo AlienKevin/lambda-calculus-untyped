@@ -282,7 +282,7 @@ viewHelpPopUp model =
       |> FeatherIcons.toHtml
         [ Html.Attributes.style "margin-right" "20px" ]
       )
-    , E.text "Go to previous cell"
+    , E.text "Go to prev cell"
     ]
   , E.row
     []

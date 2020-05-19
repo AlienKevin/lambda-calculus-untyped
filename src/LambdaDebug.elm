@@ -20,25 +20,32 @@ source =
 -- fls = \\a. \\b. b -- false
 --   """
   -- "v = (\\x.x) ((\\x.x) (\\z. (\\x.x) z))"
-  """
-pair = \\f. \\s. \\b. b f s
-fst = \\p. p tru
-snd = \\p. p fls
-tru = \\t. \\f. t
-fls = \\t. \\f. f
-v = pair tru fls
-v2 = pair (pair tru fls) (pair fls tru)
-c0 = \\s. \\z. z
-c1 = \\s. \\z. s z
-plus = \\m. \\n. \\s. \\z. m s (n s z)
-c0Plus1 = plus c0 c1
-c1Plus1 = plus c1 c1
--- divergent
-merge = (\\x. x x) (\\x. x x)
-  """
+--   """
+-- pair = \\f. \\s. \\b. b f s
+-- fst = \\p. p tru
+-- snd = \\p. p fls
+-- tru = \\t. \\f. t
+-- fls = \\t. \\f. f
+-- v = pair tru fls
+-- v2 = pair (pair tru fls) (pair fls tru)
+-- c0 = \\s. \\z. z
+-- c1 = \\s. \\z. s z
+-- plus = \\m. \\n. \\s. \\z. m s (n s z)
+-- c0Plus1 = plus c0 c1
+-- c1Plus1 = plus c1 c1
+-- -- divergent
+-- merge = (\\x. x x) (\\x. x x)
+--   """
   -- "v = (\\f. \\s. \\b. b f s) (\\t. \\f. t) (\\t. \\f. f)"
   -- "v = \\b. b (\\t. \\f. t) (\\t. \\f. f)"
-
+  """pair =
+ \\f. \\s. \\a. \\b.
+   \\b. b f s
+  \\b. b f s
+"""
+--   """f = \\a. a
+-- b = \\x. x
+--   """
 
 main =
   let
@@ -63,7 +70,7 @@ main =
             [] ->
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByValue defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

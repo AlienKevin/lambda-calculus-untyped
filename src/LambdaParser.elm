@@ -49,7 +49,7 @@ parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
 parseDefs src =
   run
     (succeed identity
-      |= internalParseDefs
+      |= withIndent 0 internalParseDefs
       |. end ExpectingDefinition
     )
     src
@@ -59,7 +59,7 @@ parseDef : String -> Result (List (DeadEnd Context Problem)) Def
 parseDef src =
   run
     (succeed identity
-      |= internalParseDef
+      |= withIndent 0 internalParseDef
       |. end ExpectingEndOfDefinition
     )
     src
@@ -68,7 +68,7 @@ parseDef src =
 parseDefOrExpr : String -> String -> Result (List (DeadEnd Context Problem)) Def
 parseDefOrExpr exprName src =
   run
-    ( succeed Def
+    ( succeed identity
       |= optional (fakeLocated exprName)
         ( succeed identity
           |= parseName
@@ -76,13 +76,27 @@ parseDefOrExpr exprName src =
           |. symbol (Token "=" ExpectingEqual)
           |. sps
         )
-      |= withIndent 0 internalParseExpr
+      |> andThen
+        (\name ->
+          succeed (Def name)
+          |= if isFakeLocated name then
+              withIndent 0 internalParseExpr
+            else
+              withIndent 0 <| indent internalParseExpr
+        )
       |> andThen
         (\def ->
-          succeed { def | name = withLocation def.expr def.name.value }
+          succeed
+            { def
+              | name =
+                if isFakeLocated def.name then
+                  withLocation def.expr def.name.value
+                else
+                  def.name
+            }
             |. (
               end <|
-              if def.name.value == "" then
+              if isFakeLocated def.name then
                 ExpectingEndOfExpression
               else
                 ExpectingEndOfDefinition
@@ -96,7 +110,7 @@ parseExpr : String -> Result (List (DeadEnd Context Problem)) (Located Expr)
 parseExpr src =
   run
     (succeed identity
-      |= internalParseExpr
+      |= withIndent 0 internalParseExpr
       |. end ExpectingEndOfExpression
     )
     src
@@ -119,12 +133,17 @@ internalParseDefs =
 
 internalParseDef : LambdaParser Def
 internalParseDef =
-  succeed Def
+  succeed identity
     |= parseName
     |. sps
     |. symbol (Token "=" ExpectingEqual)
-    |. sps
-    |= internalParseExpr
+    |> andThen
+    (\name ->
+      indent <|
+      succeed (Def name)
+      |. sps
+      |= internalParseExpr
+    )
 
 
 internalParseExpr : LambdaParser (Located Expr)
@@ -155,6 +174,7 @@ internalParseExpr =
           in
           withLocation location <| EApplication func arg
   in
+  checkIndent <|
   map
     (List.reverse >>
       (\es ->
@@ -172,26 +192,34 @@ internalParseExpr =
 internalParseExprHelper : LambdaParser (List (Located Expr))
 internalParseExprHelper =
   checkIndent <|
-  succeed (\e1 es ->
-    e1 :: es
-  )
+  ( succeed identity
     |= oneOf
       [ parseAbstraction
       , parseGroup
       , parseVariable
       ]
-    |. sps
-    |= loop []
-      (\revExprs ->
-        oneOf
-          [ succeed (\exprs -> Loop <| exprs ++ revExprs)
-            |= internalParseExprHelper
-          , succeed () |>
-            map (\_ ->
-              Done revExprs
-            )
-          ]
-      )
+    |> andThen
+    (\e1 ->
+      succeed (\es -> e1 :: es)
+      |= loop []
+        (\revExprs ->
+          oneOf
+            [ succeed (\expr -> Loop <| expr :: revExprs)
+              |. backtrackable sps
+              |= ( checkIndent <| oneOf
+                [ parseAbstraction
+                , parseGroup
+                , parseVariable
+                ]
+              )
+            , succeed () |>
+              map (\_ ->
+                Done (List.reverse revExprs)
+              )
+            ]
+        )
+    )
+  )
 
 
 parseGroup : LambdaParser (Located Expr)
@@ -262,20 +290,57 @@ ifProgress parser offset =
     |> map (\newOffset -> if offset == newOffset then Done () else Loop newOffset)
 
 
+indent : LambdaParser a -> LambdaParser a
+indent parser =
+  succeed (\indentation ->
+    indentation + 1
+  )
+  |= getIndent
+  |> andThen (\newIndentation ->
+    withIndent newIndentation parser
+  )
+
+
 checkIndent : LambdaParser a -> LambdaParser a
 checkIndent parser =
-  succeed (\indentation column ->
-    (parser, indentation < column)
+  succeed (\indentation offset column source ->
+    let
+      _ = Debug.log "AL -> indentation" <| indentation
+      _ = Debug.log "AL -> column" <| column
+      _ = Debug.log "AL -> String.slice (offset - 2) (offset - 1) source" <| String.slice (offset - 2) (offset - 1) source
+      _ = Debug.log "AL -> String.slice (offset - 1) (offset) source" <| String.slice (offset - 1) offset source
+      upToColumn =
+        String.slice (offset - column + 1) offset source
+
+      isWhiteSpace : String -> Bool
+      isWhiteSpace str =
+        let
+          _ = Debug.log "AL -> str" <| str
+        in
+        String.isEmpty <| String.trim str
+    in
+    ( parser
+    , indentation < column
+    , if isWhiteSpace upToColumn then
+        column - 1
+      else
+        indentation
+    )
     )
     |= getIndent
+    |= getOffset
     |= getCol
+    |= getSource
     |> andThen checkIndentHelp
 
 
-checkIndentHelp : (LambdaParser a, Bool) -> LambdaParser a
-checkIndentHelp (parser, isIndented) =
+checkIndentHelp : (LambdaParser a, Bool, Int) -> LambdaParser a
+checkIndentHelp (parser, isIndented, actualIndentation) =
+  let
+    _ = Debug.log "AL -> isIndented" <| isIndented
+  in
   if isIndented then
-    parser
+    withIndent actualIndentation parser
   else
     problem ExpectingIndent
 

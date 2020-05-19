@@ -219,6 +219,7 @@ viewSettingsPopUp model =
     , options =
         [ Input.option CallByValue (E.text "call by value")
         , Input.option CallByName (E.text "call by name")
+        , Input.option FullEvaluation (E.text "full evaluation")
         ]
     }
   ]
@@ -925,7 +926,10 @@ decodeEvalStrategy =
         
         "CallByName" ->
           Decode.succeed CallByName
-        
+
+        "FullEvaluation" ->
+          Decode.succeed FullEvaluation
+
         _ ->
           Decode.fail "Invalid evaluation strategy" 
     )
@@ -955,6 +959,9 @@ encodeEvalStrategy strategy =
     
     CallByName ->
       "CallByName"
+
+    FullEvaluation ->
+      "FullEvaluation"
 
 
 scale : Orientation -> Int -> Int

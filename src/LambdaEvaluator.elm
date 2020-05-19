@@ -11,6 +11,7 @@ import List.Extra
 type EvalStrategy
   = CallByName
   | CallByValue
+  | FullEvaluation
 
 
 evalDefs : EvalStrategy -> List Def -> List Def
@@ -78,7 +79,6 @@ type alias Ctx =
 evalExpr : EvalStrategy -> Ctx -> Located Expr -> Located Expr
 evalExpr strategy ctx expr =
   let
-    _ = Debug.log "AL -> term" <| term
     term =
       exprToTerm ctx expr
   in
@@ -89,6 +89,9 @@ evalExpr strategy ctx expr =
 
     CallByValue ->
       evalTermCallByValue ctx term
+    
+    FullEvaluation ->
+      evalTermFull ctx term
 
 
 termToExpr : List String -> Located Term -> Located Expr
@@ -104,6 +107,21 @@ termToExpr names t =
           pickNewName names boundVar.value
       in
       EAbstraction (withLocation boundVar newName) <| termToExpr newNames t1
+  
+    TmApplication t1 t2 ->
+      EApplication (termToExpr names t1) (termToExpr names t2)
+
+
+-- show de brujin index instead of transforming to names
+termToExprDebug : List String -> Located Term -> Located Expr
+termToExprDebug names t =
+  withLocation t <|
+  case t.value of
+    TmVariable index ->
+      EVariable <| withLocation t <| String.fromInt index
+    
+    TmAbstraction boundVar t1 ->
+      EAbstraction (withLocation boundVar "") <| termToExpr names t1
   
     TmApplication t1 t2 ->
       EApplication (termToExpr names t1) (termToExpr names t2)
@@ -162,24 +180,14 @@ evalTermCallByValue ctx t =
 
 evalTermCallByValueHelper : Ctx -> Located Term -> Result () (Located Term)
 evalTermCallByValueHelper ctx t =
-  let
-    _ = Debug.log "AL -> t.value" <| t.value
-  in
   case t.value of
     TmApplication t1 t2 ->
-      let
-        _ = Debug.log "AL -> t1" <| isValue t1
-        _ = Debug.log "AL -> t2" <| isValue t2
-      in
       if isValue t2 then
         case t1.value of
           TmAbstraction _ t12 ->
             Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
           
           _ ->
-            let
-              _ = Debug.log "AL -> t1" <| t1
-            in
             evalTermCallByValueHelper ctx t1 |>
             Result.map
             (\newT1 ->
@@ -200,6 +208,78 @@ evalTermCallByValueHelper ctx t =
     
     _ ->
       Err ()
+
+
+evalTermFull : Ctx -> Located Term -> Located Term
+evalTermFull ctx0 t0 =
+  let
+    eval : Int -> Ctx -> Located Term -> Located Term
+    eval iterations ctx t =
+      case evalTermFullHelper ctx t of
+        Err _ ->
+          t
+        
+        Ok t2 ->
+          if iterations >= 10000 then
+            t2
+          else
+            eval (iterations + 1) ctx t2
+  in
+  eval 0 ctx0 t0
+
+
+evalTermFullHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
+evalTermFullHelper ctx t =
+  case t.value of
+    TmApplication t1 t2 ->
+      case t1.value of
+        TmAbstraction _ t12 ->
+          Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
+        
+        _ ->
+          combineResults
+          (\a b -> withLocation t <| TmApplication a b)
+          (evalTermFullHelper ctx t1)
+          (evalTermFullHelper ctx t2)
+    
+    TmAbstraction boundVar t1 ->
+      mapBothResults
+      (\newT1 ->
+        withLocation t <| TmAbstraction boundVar newT1
+      )
+      (evalTermFullHelper ctx t1)
+
+    _ ->
+      Err t
+
+
+mapBothResults : (a -> b) -> Result a a -> Result b b
+mapBothResults f r =
+  case r of
+    Ok o ->
+      Ok <| f o
+    
+    Err e ->
+      Err <| f e
+
+combineResults : (a -> a -> b) -> Result a a -> Result a a -> Result b b
+combineResults f r1 r2 =
+  -- let
+    -- _ = Debug.log "AL -> r1" <| r1
+    -- _ = Debug.log "AL -> r2" <| r2
+  -- in
+  case (r1, r2) of
+    (Ok o1, Ok o2) ->
+      Ok <| f o1 o2
+    
+    (Ok o1, Err e2) ->
+      Ok <| f o1 e2
+    
+    (Err e1, Ok o2) ->
+      Ok <| f e1 o2
+    
+    (Err e1, Err e2) ->
+      Err <| f e1 e2
 
 
 isValue : Located Term -> Bool

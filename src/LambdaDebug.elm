@@ -26,9 +26,16 @@ fst = \\p. p tru
 snd = \\p. p fls
 tru = \\t. \\f. t
 fls = \\t. \\f. f
-v = fst (pair tru fls)
+v = pair tru fls
 v2 = pair (pair tru fls) (pair fls tru)
+c0 = \\s. \\z. z
+c1 = \\s. \\z. s z
+plus = \\m. \\n. \\s. \\z. m s (n s z)
+c0Plus1 = plus c0 c1
+c1Plus1 = plus c1 c1
   """
+  -- "v = (\\f. \\s. \\b. b f s) (\\t. \\f. t) (\\t. \\f. f)"
+  -- "v = \\b. b (\\t. \\f. t) (\\t. \\f. f)"
 
 
 main =
@@ -54,7 +61,7 @@ main =
             [] ->
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByName defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

@@ -89,9 +89,12 @@ colors =
 styles =
   { title =
     [ Font.bold
+    , E.htmlAttribute <| Html.Attributes.style "font-size" "125%"
     ]
   , subtitle =
-    [ Font.italic
+    [ E.paddingXY 0 10
+    , Font.bold
+    , E.htmlAttribute <| Html.Attributes.style "font-size" "110%"
     ]
   , popUp =
     [ E.centerX

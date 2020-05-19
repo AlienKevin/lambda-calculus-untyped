@@ -44,6 +44,8 @@ type alias Model =
   , orientation : Orientation
   , popUp : PopUp
   , toolTip : ToolTip
+  , colors : Colors
+  , theme : Theme
   }
 
 
@@ -59,6 +61,7 @@ type Msg
   | SaveModel
   | SetToolTip ToolTip
   | CloseActiveCell
+  | SetTheme Theme
   | NoOp
 
 
@@ -84,9 +87,21 @@ type ToolTip
   | NoToolTip
 
 
-colors =
-  { lightGrey =
-    E.rgb255 220 220 220
+type Theme
+  = Light
+  | SolarizedLight
+  | Dark
+
+
+type alias Colors =
+  { lightFg :
+    E.Color
+  , darkFg :
+    E.Color
+  , lightBg :
+    E.Color
+  , darkBg :
+    E.Color
   }
 
 
@@ -105,7 +120,6 @@ styles =
     , E.centerY
     , E.padding 30
     , E.spacing 10
-    , Background.color colors.lightGrey
     , Border.rounded 10
     , E.inFront viewClosePopUpButton
     ]
@@ -140,6 +154,10 @@ init savedModelStr =
         NoPopUp
       , toolTip =
         NoToolTip
+      , colors =
+        getThemeColors Light
+      , theme =
+        Light
       }
     
     initialModel =
@@ -166,11 +184,11 @@ view model =
   ( [ Font.family
       [ Font.monospace
       ]
-    , E.width ( E.fill |> E.maximum 700 )
-    , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
     , E.inFront <| viewToolButtons model
     , E.inFront <| viewPopUp model
     , Font.size <| scale model.orientation 16
+    , Font.color model.colors.darkFg
+    , Background.color model.colors.lightBg
     ] ++ case model.orientation of
       Landscape ->
         [ E.padding 30
@@ -191,11 +209,12 @@ view model =
   ) <|
   E.column
   [ E.spacing 15
-  , E.width E.fill
+  , E.width ( E.fill |> E.maximum 700 )
+  , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
   ] <|
   List.indexedMap
     (\index result ->
-      viewCell model.activeCellIndex index result
+      viewCell model.activeCellIndex index result model
     )
     (Dict.values model.cells)
 
@@ -204,7 +223,7 @@ viewPopUp : Model -> E.Element Msg
 viewPopUp model =
   case model.popUp of
     HelpPopUp ->
-      viewHelpPopUp
+      viewHelpPopUp model
     
     SettingsPopUp ->
       viewSettingsPopUp model
@@ -216,7 +235,7 @@ viewPopUp model =
 viewSettingsPopUp : Model -> E.Element Msg
 viewSettingsPopUp model =
   E.column
-  styles.popUp
+  ( styles.popUp ++ [ Background.color model.colors.darkBg ])
   [ E.el styles.title <| E.text "Settings"
   , E.el styles.subtitle <| E.text "Evaluation Strategy"
   , Input.radio
@@ -232,13 +251,27 @@ viewSettingsPopUp model =
         , Input.option FullEvaluation (E.text "full evaluation")
         ]
     }
+  , E.el styles.subtitle <| E.text "Color Theme"
+  , Input.radio
+    [ E.padding 10
+    , E.spacing 20
+    ]
+    { onChange = SetTheme
+    , selected = Just model.theme
+    , label = Input.labelHidden "Color Theme"
+    , options =
+        [ Input.option Light (E.text "Light")
+        , Input.option SolarizedLight (E.text "Solarized Light")
+        , Input.option Dark (E.text "Dark")
+        ]
+    }
   ]
 
 
-viewHelpPopUp : E.Element Msg
-viewHelpPopUp =
+viewHelpPopUp : Model -> E.Element Msg
+viewHelpPopUp model =
   E.column
-  styles.popUp
+  (styles.popUp ++ [ Background.color model.colors.darkBg ])
   [ E.el styles.title <| E.text "Help"
   , E.el styles.subtitle <| E.text "Keyboard Shortcuts"
   , E.row
@@ -437,8 +470,8 @@ viewAddCellButton =
     }
 
 
-viewCell : Int -> Int -> (String, Result String Def) -> E.Element Msg
-viewCell activeCellIndex currentCellIndex (src, result) =
+viewCell : Int -> Int -> (String, Result String Def) -> Model -> E.Element Msg
+viewCell activeCellIndex currentCellIndex (src, result) model =
   let
     resultDisplay =
       E.el
@@ -491,11 +524,10 @@ viewCell activeCellIndex currentCellIndex (src, result) =
         ] <|
         E.el
         [ E.centerX
-        , E.htmlAttribute <|
-          if activeCellIndex == currentCellIndex then
-            Html.Attributes.style "color" "black"
+        , if activeCellIndex == currentCellIndex then
+            Font.color model.colors.darkFg
           else
-            Html.Attributes.style "color" "grey"
+            Font.color model.colors.lightFg
         , E.below <|
           if activeCellIndex == currentCellIndex then
             viewAddCellButton
@@ -512,6 +544,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
               Decode.map HandleKeyDown Keyboard.Event.decodeKeyboardEvent
             , E.htmlAttribute <| Html.Attributes.id <| getCellId currentCellIndex
             , E.onRight <| viewRemoveActiveCellButton
+            , Background.color model.colors.lightBg
             ]
             { onChange =
               EditCell
@@ -531,7 +564,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
           , E.htmlAttribute <| Html.Attributes.style "min-height" "calc(1em + 24px)"
           , Border.width 1
           , Border.rounded 5
-          , Border.color colors.lightGrey
+          , Border.color model.colors.lightFg
           , E.width E.fill
           , Element.Events.onClick <| ActivateCell currentCellIndex
           ] <|
@@ -599,8 +632,60 @@ update msg model =
     GotCellCursorRow row ->
       gotCellCursorRow row model
 
+    SetTheme theme ->
+      setTheme theme model
+
     NoOp ->
       (model, Cmd.none)
+
+
+setTheme : Theme -> Model -> (Model, Cmd Msg)
+setTheme theme model =
+  ( { model
+      | theme =
+        theme
+      , colors =
+        getThemeColors theme
+    }
+  , Cmd.none
+  )
+
+
+getThemeColors : Theme -> Colors
+getThemeColors theme =
+  case theme of
+    Light ->
+      { lightFg =
+        E.rgb255 220 220 220
+      , darkFg =
+        E.rgb255 0 0 0
+      , lightBg =
+        E.rgb255 255 255 255
+      , darkBg =
+        E.rgb255 220 220 220
+      }
+    
+    SolarizedLight ->
+      { lightFg =
+        E.rgb255 220 220 220
+      , darkFg =
+        E.rgb255 0 0 0
+      , lightBg =
+        E.rgb255 253 246 227
+      , darkBg =
+        E.rgb255 220 220 220
+      }
+    
+    Dark ->
+      { lightBg =
+        E.rgb255 0 0 0
+      , darkBg =
+        E.rgb255 150 150 150
+      , lightFg =
+        E.rgb255 180 180 180
+      , darkFg =
+        E.rgb255 255 255 255
+      }
 
 
 {- row
@@ -1007,6 +1092,7 @@ decodeModel =
   Field.require "cells" (Decode.list Decode.string) <| \srcs ->
   Field.require "activeCellIndex" Decode.int <| \activeCellIndex ->
   Field.require "evalStrategy" decodeEvalStrategy <| \evalStrategy ->
+  Field.require "theme" decodeTheme <| \theme ->
 
   Decode.succeed <|
     evalAllCells
@@ -1029,7 +1115,31 @@ decodeModel =
       NoPopUp
     , toolTip =
       NoToolTip
+    , colors =
+      getThemeColors theme
+    , theme =
+      theme
     }
+
+
+decodeTheme : Decoder Theme
+decodeTheme =
+  Decode.string |>
+  Decode.andThen
+    (\str ->
+      case str of
+        "Light" ->
+          Decode.succeed Light
+        
+        "SolarizedLight" ->
+          Decode.succeed SolarizedLight
+
+        "Dark" ->
+          Decode.succeed Dark
+
+        _ ->
+          Decode.fail "Invalid theme" 
+    )
 
 
 decodeEvalStrategy : Decoder EvalStrategy
@@ -1064,7 +1174,22 @@ encodeModel model =
     [ ( "cells", Encode.list Encode.string <| List.map Tuple.first <| Dict.values model.cells )
     , ( "activeCellIndex", Encode.int model.activeCellIndex )
     , ( "evalStrategy", encodeEvalStrategy model.evalStrategy )
+    , ( "theme", encodeTheme model.theme )
     ]
+
+
+encodeTheme : Theme -> Encode.Value
+encodeTheme theme =
+  Encode.string <|
+    case theme of
+      Light ->
+        "Light"
+      
+      SolarizedLight ->
+        "SolarizedLight"
+
+      Dark ->
+        "Dark"
 
 
 encodeEvalStrategy : EvalStrategy -> Encode.Value
@@ -1089,3 +1214,20 @@ scale  orientation value =
     
     Landscape ->
       value
+
+
+elmUiColorToCssColor : E.Color -> String
+elmUiColorToCssColor color =
+  let
+    { red, green, blue } =
+      E.toRgb color
+  in
+  "rgb("
+  ++ ( String.join "," <|
+    List.map
+      (\c ->
+        String.fromFloat <| c * 255
+      )
+      [ red, green, blue ]
+  )
+  ++ ")"

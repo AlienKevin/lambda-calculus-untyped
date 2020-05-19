@@ -12,6 +12,20 @@ Try repl [here](https://alienkevin.github.io/lambda-calculus-untyped/)!
 * Instant evaluations and problem feedbacks
 * Tailored experiences for all devices
 
+# Themes
+
+## Light
+
+![repl light theme demo](./media/repl_light_theme_demo.png)
+
+## Solarized Light
+
+![repl solarized light theme demo](./media/repl_solarized_light_theme_demo.png)
+
+## Dark
+
+![repl dark theme demo](./media/repl_dark_theme_demo.png)
+
 # Development
 1. Install [elm-live](https://github.com/wking-io/elm-live).
 

@@ -308,18 +308,11 @@ checkIndent : LambdaParser a -> LambdaParser a
 checkIndent parser =
   succeed (\indentation offset column source ->
     let
-      _ = Debug.log "AL -> indentation" <| indentation
-      _ = Debug.log "AL -> column" <| column
-      _ = Debug.log "AL -> String.slice (offset - 2) (offset - 1) source" <| String.slice (offset - 2) (offset - 1) source
-      _ = Debug.log "AL -> String.slice (offset - 1) (offset) source" <| String.slice (offset - 1) offset source
       upToColumn =
         String.slice (offset - column + 1) offset source
 
       isWhiteSpace : String -> Bool
       isWhiteSpace str =
-        let
-          _ = Debug.log "AL -> str" <| str
-        in
         String.isEmpty <| String.trim str
     in
     ( parser
@@ -339,9 +332,6 @@ checkIndent parser =
 
 checkIndentHelp : (LambdaParser a, Bool, Int) -> LambdaParser a
 checkIndentHelp (parser, isIndented, actualIndentation) =
-  let
-    _ = Debug.log "AL -> isIndented" <| isIndented
-  in
   if isIndented then
     withIndent actualIndentation parser
   else

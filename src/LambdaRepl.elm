@@ -272,6 +272,15 @@ viewHelpPopUp =
       )
     , E.text "Add cell"
     ]
+  , E.el styles.subtitle <| E.text "Source Code"
+  , E.newTabLink []
+    { url =
+      "https://github.com/AlienKevin/lambda-calculus-untyped"
+    , label =
+      E.el
+      [ Font.underline ] <|
+      E.text "Open source on GitHub"
+    }
   ]
 
 

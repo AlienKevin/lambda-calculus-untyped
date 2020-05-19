@@ -33,6 +33,14 @@ MIT
 
 # Change Log
 
+## Release v0.4.0
+
+* Fix substitution issues by switching to De Bruijn Indices
+* Support full evaluation
+* Protect against infinite recursion like the merge function (\x. x x) (\x. x x)
+* Clean up parentheses wrapping
+* Return evaluated defs in original order
+
 ## Release v0.3.0
 
 * Save model automatically to LocalStorage

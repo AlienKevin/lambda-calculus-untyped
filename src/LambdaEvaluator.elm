@@ -85,7 +85,7 @@ evalExpr strategy ctx expr =
   termToExpr [] <|
   case strategy of
     CallByName ->
-      evalTermCallByValue ctx term
+      evalTermCallByName ctx term
 
     CallByValue ->
       evalTermCallByValue ctx term
@@ -209,6 +209,50 @@ evalTermCallByValueHelper ctx t =
         )
       else
         evalTermCallByValueHelper ctx t1 |>
+        Result.map
+        (\newT1 ->
+          withLocation t <| TmApplication newT1 t2
+        )
+    
+    _ ->
+      Err ()
+
+
+evalTermCallByName : Ctx -> Located Term -> Located Term
+evalTermCallByName ctx0 t0 =
+  let
+    eval : Int -> Ctx -> Located Term -> Located Term
+    eval iterations ctx t =
+      case evalTermCallByNameHelper ctx t of
+        Err _ ->
+          t
+        
+        Ok t2 ->
+          if iterations >= 10000 then
+            t2
+          else
+            eval (iterations + 1) ctx t2
+  in
+  eval 0 ctx0 t0
+
+
+evalTermCallByNameHelper : Ctx -> Located Term -> Result () (Located Term)
+evalTermCallByNameHelper ctx t =
+  case t.value of
+    TmApplication t1 t2 ->
+      if isValue t2 then
+        case t1.value of
+          TmAbstraction _ t12 ->
+            Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
+          
+          _ ->
+            evalTermCallByNameHelper ctx t1 |>
+            Result.map
+            (\newT1 ->
+              withLocation t <| TmApplication newT1 t2
+            )
+      else
+        evalTermCallByNameHelper ctx t1 |>
         Result.map
         (\newT1 ->
           withLocation t <| TmApplication newT1 t2

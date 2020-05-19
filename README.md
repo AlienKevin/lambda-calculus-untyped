@@ -8,8 +8,11 @@ Try repl [here](https://alienkevin.github.io/lambda-calculus-untyped/)!
 
 # Features
 
-* Cell-based repl with flexible editing
+* Cell-based repl with easy navigation
+* Seamless multi-line cell editing
 * Instant evaluations and problem feedbacks
+* Auto save repl
+* Support several color themes
 * Tailored experiences for all devices
 
 # Themes
@@ -46,6 +49,20 @@ At the project root directory, run `build.sh` to create an optimized and minimiz
 MIT
 
 # Change Log
+
+## Release 0.7.0
+
+* Align repl to top of window
+* Fix icon z-index hierarchy
+* Color error messages tomato red
+
+## Release 0.6.0
+
+* Support expr without name in repl
+* Fix indentation parsing
+* Properly handle key up and down in multi-row cells
+* Allow comments before and after def or expr in repl
+* Support 3 color themes
 
 ## Release v0.5.0
 

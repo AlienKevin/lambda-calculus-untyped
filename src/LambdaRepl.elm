@@ -449,7 +449,11 @@ viewCell activeCellIndex currentCellIndex (src, result) =
       ] <|
       case result of
         Ok def ->
-          E.text <| LambdaParser.showDef def
+          E.text <|
+            if String.startsWith "$" def.name.value then
+              LambdaParser.showExpr def.expr.value
+            else
+              LambdaParser.showDef def
         
         Err msg ->
           E.html <|
@@ -832,8 +836,12 @@ evalAllCells model =
   let
     unevaluatedCells =
       Dict.map
-        (\_ (src, _) ->
-          case LambdaParser.parseDef src of
+        (\index (src, _) ->
+          let
+            exprName =
+              "$" ++ String.fromInt (index + 1)
+          in
+          case LambdaParser.parseDefOrExpr exprName src of
             Err _ ->
               (src, Err "")
             
@@ -909,8 +917,11 @@ evalDef strategy otherDefs currentIndex srcs =
     src =
       Maybe.withDefault "" <| -- impossible
       List.Extra.getAt currentIndex srcs
+    
+    exprName =
+      "$" ++ String.fromInt (currentIndex + 1)
   in
-  case LambdaParser.parseDef src of
+  case LambdaParser.parseDefOrExpr exprName src of
     Err problems ->
       Err <| LambdaParser.showProblems src problems
     

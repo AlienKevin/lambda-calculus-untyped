@@ -1,4 +1,4 @@
-module LambdaParser exposing (parseDefs, parseDef, parseExpr, showProblems, showDefs, showDef, showExpr, fakeDef, Def, Expr(..))
+module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, fakeDef, Def, Expr(..))
 
 
 import Parser.Advanced exposing (..)
@@ -61,6 +61,33 @@ parseDef src =
     (succeed identity
       |= internalParseDef
       |. end ExpectingEndOfDefinition
+    )
+    src
+
+
+parseDefOrExpr : String -> String -> Result (List (DeadEnd Context Problem)) Def
+parseDefOrExpr exprName src =
+  run
+    ( succeed Def
+      |= optional (fakeLocated exprName)
+        ( succeed identity
+          |= parseName
+          |. sps
+          |. symbol (Token "=" ExpectingEqual)
+          |. sps
+        )
+      |= withIndent 0 internalParseExpr
+      |> andThen
+        (\def ->
+          succeed { def | name = withLocation def.expr def.name.value }
+            |. (
+              end <|
+              if def.name.value == "" then
+                ExpectingEndOfExpression
+              else
+                ExpectingEndOfDefinition
+            )
+        )
     )
     src
 
@@ -425,3 +452,10 @@ fakeDef =
   { name = fakeLocated "IMPOSSIBLE"
   , expr = fakeLocatedExpr
   }
+
+optional : a -> LambdaParser a -> LambdaParser a
+optional default parser =
+  oneOf
+    [ backtrackable parser
+    , succeed default
+    ]

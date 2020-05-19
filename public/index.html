@@ -18,6 +18,22 @@
       localStorage.setItem(storageKey, modelStr);
     });
 
+    app.ports.askCellCursorRowPort.subscribe(function(cellId) {
+      var cell = document.getElementById(cellId)
+      var content = cell.value;
+      var totalRows = content.split("\n").length;
+      var cursorRow = content.substr(0, cell.selectionStart).split("\n").length;
+      var result = -1; // by default, cursor at middle of cell
+      if (totalRows == 1) { // only a single row, so cursor at both top and bottom of cell
+        result = 0
+      } else if (cursorRow == 1) { // cursor at top of cell
+        result = 1;
+      } else if (cursorRow == totalRows) { // // cursor at bottom of cell
+        result = 2;
+      }
+      app.ports.gotCellCursorRowPort.send(result);
+    });
+
     window.addEventListener("beforeunload", function() {
       app.ports.pageWillClosePort.send(null);
     });

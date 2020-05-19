@@ -32,11 +32,14 @@ import Time
 
 port saveModelPort : Encode.Value -> Cmd msg
 port pageWillClosePort : (() -> msg) -> Sub msg
+port askCellCursorRowPort : String -> Cmd msg
+port gotCellCursorRowPort : (Int -> msg) -> Sub msg
 
 
 type alias Model =
   { cells : Dict Int Cell
   , activeCellIndex : Int
+  , pendingKeyAction : Maybe Keyboard.Key.Key
   , evalStrategy : EvalStrategy
   , orientation : Orientation
   , popUp : PopUp
@@ -49,6 +52,7 @@ type Msg
   | ActivateCell Int
   | AddCell
   | HandleKeyDown KeyboardEvent
+  | GotCellCursorRow Int
   | HandleOrientation Int
   | SetPopUp PopUp
   | SetEvalStrategy EvalStrategy
@@ -126,6 +130,8 @@ init savedModelStr =
         Dict.singleton 0 emptyCell
       , activeCellIndex =
         0
+      , pendingKeyAction =
+        Nothing
       , evalStrategy =
         CallByValue
       , orientation =
@@ -504,7 +510,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
             , E.htmlAttribute <|
               Html.Events.on "keydown" <|
               Decode.map HandleKeyDown Keyboard.Event.decodeKeyboardEvent
-            , E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
+            , E.htmlAttribute <| Html.Attributes.id <| getCellId currentCellIndex
             , E.onRight <| viewRemoveActiveCellButton
             ]
             { onChange =
@@ -520,7 +526,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
             }
         else
           E.el
-          [ E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
+          [ E.htmlAttribute <| Html.Attributes.id <| getCellId currentCellIndex
           , E.padding 10
           , E.htmlAttribute <| Html.Attributes.style "min-height" "calc(1em + 24px)"
           , Border.width 1
@@ -590,7 +596,35 @@ update msg model =
     CloseActiveCell ->
       closeActiveCell model
 
+    GotCellCursorRow row ->
+      gotCellCursorRow row model
+
     NoOp ->
+      (model, Cmd.none)
+
+
+{- row
+    = -1 -- cursor at middle of the cell
+    = 0  -- cursor at both the top and the bottom of the cell (cell has a single row)
+    = 1  -- cursor at the top of the cell
+    = 2  -- cursor at the bottom of the cell
+-}
+gotCellCursorRow : Int -> Model -> (Model, Cmd Msg)
+gotCellCursorRow row model =
+  case model.pendingKeyAction of
+    Just Keyboard.Key.Up ->
+      if row == 0 || row == 1 then
+        activatePreviousCell model
+      else
+        (model, Cmd.none)
+    
+    Just Keyboard.Key.Down ->
+      if row == 0 || row == 2 then
+        activateNextCell model
+      else
+        (model, Cmd.none)
+
+    _ ->
       (model, Cmd.none)
 
 
@@ -691,10 +725,20 @@ handleKeyDown { keyCode, ctrlKey } model =
         (model, Cmd.none)
 
     Keyboard.Key.Up ->
-      activatePreviousCell model
+      ( { model
+          | pendingKeyAction =
+            Just Keyboard.Key.Up
+        }
+      , askCellCursorRowPort <| getCellId model.activeCellIndex
+      )
 
     Keyboard.Key.Down ->
-      activateNextCell model
+      ( { model
+          | pendingKeyAction =
+            Just Keyboard.Key.Down
+        }
+      , askCellCursorRowPort <| getCellId model.activeCellIndex
+      )
 
     _ ->
       (model, Cmd.none)
@@ -812,7 +856,12 @@ addCell model =
 
 focusCell : Int -> Cmd Msg
 focusCell index =
-  Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| "cell" ++ String.fromInt index
+  Task.attempt (\_ -> NoOp) <| Browser.Dom.focus <| getCellId index
+
+
+getCellId : Int -> String
+getCellId index =
+  "cell" ++ String.fromInt index
 
 
 editCell : String -> Model -> (Model, Cmd Msg)
@@ -940,6 +989,7 @@ subscriptions model =
     [ Browser.Events.onResize (\width _ -> HandleOrientation width)
     , pageWillClosePort (\_ -> SaveModel)
     , Time.every 1000 (\_ -> SaveModel)
+    , gotCellCursorRowPort GotCellCursorRow
     ]
 
 
@@ -969,6 +1019,8 @@ decodeModel =
         srcs
     , activeCellIndex =
       activeCellIndex
+    , pendingKeyAction =
+        Nothing
     , evalStrategy =
       evalStrategy
     , orientation =

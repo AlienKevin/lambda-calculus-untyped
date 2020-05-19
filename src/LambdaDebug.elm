@@ -33,6 +33,8 @@ c1 = \\s. \\z. s z
 plus = \\m. \\n. \\s. \\z. m s (n s z)
 c0Plus1 = plus c0 c1
 c1Plus1 = plus c1 c1
+-- divergent
+merge = (\\x. x x) (\\x. x x)
   """
   -- "v = (\\f. \\s. \\b. b f s) (\\t. \\f. t) (\\t. \\f. f)"
   -- "v = \\b. b (\\t. \\f. t) (\\t. \\f. f)"
@@ -61,7 +63,7 @@ main =
             [] ->
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByValue defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

@@ -169,13 +169,21 @@ exprToTerm ctx expr =
 
 
 evalTermCallByValue : Ctx -> Located Term -> Located Term
-evalTermCallByValue ctx t =
-  case evalTermCallByValueHelper ctx t of
-    Err _ ->
-      t
-    
-    Ok t2 ->
-      evalTermCallByValue ctx t2
+evalTermCallByValue ctx0 t0 =
+  let
+    eval : Int -> Ctx -> Located Term -> Located Term
+    eval iterations ctx t =
+      case evalTermCallByValueHelper ctx t of
+        Err _ ->
+          t
+        
+        Ok t2 ->
+          if iterations >= 10000 then
+            t2
+          else
+            eval (iterations + 1) ctx t2
+  in
+  eval 0 ctx0 t0
 
 
 evalTermCallByValueHelper : Ctx -> Located Term -> Result () (Located Term)

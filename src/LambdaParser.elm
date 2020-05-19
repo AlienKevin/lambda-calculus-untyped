@@ -69,6 +69,7 @@ parseDefOrExpr : String -> String -> Result (List (DeadEnd Context Problem)) Def
 parseDefOrExpr exprName src =
   run
     ( succeed identity
+      |. sps
       |= optional (fakeLocated exprName)
         ( succeed identity
           |= parseName
@@ -79,10 +80,12 @@ parseDefOrExpr exprName src =
       |> andThen
         (\name ->
           succeed (Def name)
-          |= if isFakeLocated name then
+          |= ( if isFakeLocated name then
               withIndent 0 internalParseExpr
             else
               withIndent 0 <| indent internalParseExpr
+          )
+          |. sps
         )
       |> andThen
         (\def ->

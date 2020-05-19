@@ -274,6 +274,15 @@ viewHelpPopUp model =
   E.column
   (styles.popUp ++ [ Background.color model.colors.darkBg ])
   [ E.el styles.title <| E.text "Help"
+  , E.el styles.subtitle <| E.text "Syntax"
+  , E.paragraph
+    [ E.htmlAttribute <| Html.Attributes.style "max-width" "60vw"
+    ]
+    [ E.text "Untyped lambda calculus has 3 components:"
+    ]
+  , E.text "Variable:    x"
+  , E.text "Abstraction: \\x. t"
+  , E.text "Application: t1 t2"
   , E.el styles.subtitle <| E.text "Keyboard Shortcuts"
   , E.row
     []

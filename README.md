@@ -33,6 +33,12 @@ MIT
 
 # Change Log
 
+## Release v0.5.0
+
+* Add close active cell button
+* Better visual hierarchy in popups
+* Add link to source code in help popup
+
 ## Release v0.4.0
 
 * Fix substitution issues by switching to De Bruijn Indices

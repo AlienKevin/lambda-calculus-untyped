@@ -54,6 +54,7 @@ type Msg
   | SetEvalStrategy EvalStrategy
   | SaveModel
   | SetToolTip ToolTip
+  | CloseActiveCell
   | NoOp
 
 
@@ -488,6 +489,7 @@ viewCell activeCellIndex currentCellIndex (src, result) =
               Html.Events.on "keydown" <|
               Decode.map HandleKeyDown Keyboard.Event.decodeKeyboardEvent
             , E.htmlAttribute <| Html.Attributes.id <| "cell" ++ String.fromInt currentCellIndex
+            , E.onRight <| viewRemoveActiveCellButton
             ]
             { onChange =
               EditCell
@@ -515,6 +517,28 @@ viewCell activeCellIndex currentCellIndex (src, result) =
       ]
     , resultDisplay
     ]
+
+
+viewRemoveActiveCellButton : E.Element Msg
+viewRemoveActiveCellButton =
+  Input.button
+    [ E.centerY
+    , E.htmlAttribute <| Html.Attributes.style "margin-left" "-30px"
+    , E.htmlAttribute <| onClickNoProp CloseActiveCell
+    ]
+    { onPress =
+      Nothing
+    , label =
+      E.html
+        ( FeatherIcons.xCircle
+        |> FeatherIcons.toHtml []
+        )
+    }
+
+
+onClickNoProp : msg -> Html.Attribute msg
+onClickNoProp msg =
+  Html.Events.stopPropagationOn "click" (Decode.map (\msg1 -> ( msg1, True )) (Decode.succeed msg))
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
@@ -547,8 +571,20 @@ update msg model =
     SetToolTip toolTip ->
       setToolTip toolTip model
 
+    CloseActiveCell ->
+      closeActiveCell model
+
     NoOp ->
       (model, Cmd.none)
+
+
+closeActiveCell : Model -> (Model, Cmd Msg)
+closeActiveCell model =
+  let
+    getNextCellIndex currentCell =
+      currentCell
+  in
+  removeCell getNextCellIndex model
 
 
 setToolTip : ToolTip -> Model -> (Model, Cmd Msg)
@@ -626,7 +662,17 @@ handleKeyDown { keyCode, ctrlKey } model =
         (model, Cmd.none)
     
     Keyboard.Key.Backspace ->
-      removeCell model
+      let
+        (activeSrc, _) =
+          getActiveCell model
+        
+        getNextCellIndex currentCell =
+          currentCell - 1
+      in
+      if activeSrc == "" then
+        removeCell getNextCellIndex model
+      else
+        (model, Cmd.none)
 
     Keyboard.Key.Up ->
       activatePreviousCell model
@@ -678,13 +724,9 @@ activatePreviousCell model =
   )
 
 
-removeCell : Model -> (Model, Cmd Msg)
-removeCell model =
-  let
-    (activeSrc, _) =
-      getActiveCell model
-  in
-  if activeSrc == "" && Dict.size model.cells > 1 then
+removeCell : (Int -> Int) -> Model -> (Model, Cmd Msg)
+removeCell getNextCellIndex model =
+  if Dict.size model.cells > 1 then
     let
       oldActiveCellIndex =
         model.activeCellIndex
@@ -694,7 +736,7 @@ removeCell model =
         if oldActiveCellIndex == 0 then
           oldActiveCellIndex
         else -- any cell after the first one
-          oldActiveCellIndex - 1
+          getNextCellIndex oldActiveCellIndex
 
       filterCell : Int -> Cell -> Dict Int Cell -> Dict Int Cell
       filterCell index cell cells =

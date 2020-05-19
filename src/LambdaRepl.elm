@@ -211,6 +211,7 @@ view model =
   [ E.spacing 15
   , E.width ( E.fill |> E.maximum 700 )
   , E.htmlAttribute <| Html.Attributes.style "margin" "auto"
+  , E.alignTop
   ] <|
   List.indexedMap
     (\index result ->

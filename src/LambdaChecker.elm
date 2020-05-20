@@ -14,6 +14,7 @@ type Problem
   | TypeError (Located String)
   | ExpectingTyFunc (Located Type)
   | ExpectingTyBool (Located Type)
+  | ExpectingTyInt (Located Type)
   | MismatchedType (Located Type) (Located Type)
 
 
@@ -111,6 +112,10 @@ checkExpr names expr =
 
     EInt _ ->
       []
+
+    EAdd left right ->
+      checkExpr names left
+      ++ checkExpr names right
     
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
@@ -184,6 +189,27 @@ getType ctx expr =
         
           _ ->
             Err <| ExpectingTyBool conditionType 
+      )
+
+    EAdd left right ->
+      getType ctx left |>
+      Result.andThen
+      (\leftType ->
+        case leftType.value of
+          TyInt ->
+            getType ctx right |>
+            Result.andThen
+            (\rightType ->
+              case rightType.value of
+                TyInt ->
+                  Ok <| withLocation expr TyInt
+                
+                _ ->
+                  Err <| ExpectingTyInt rightType
+            )
+          
+          _ ->
+            Err <| ExpectingTyInt leftType
       )
 
     EBool _ ->
@@ -326,6 +352,14 @@ showProblemWithSingleSourceHelper src problem =
       , "Hint: Try changing it to a Bool."
       ]
 
+    ExpectingTyInt ty ->
+      [ "-- EXPECTING INT TYPE\n"
+      , "I'm expecting a Int here:"
+      , showLocation src ty
+      , "but got " ++ showType ty.value ++ "."
+      , "Hint: Try changing it to a Int."
+      ]
+
     MismatchedType ty1 ty2 ->
       [ "-- MISMATCHED TYPES\n"
       , "I'm expecting a " ++ showType ty1.value ++ " type here:"
@@ -396,6 +430,10 @@ getFreeVariablesHelper boundVariables expr =
     
     EInt _ ->
       []
+
+    EAdd left right ->
+      getFreeVariablesHelper boundVariables left.value
+      ++ getFreeVariablesHelper boundVariables right.value
 
     EIf condition thenBranch elseBranch ->
       getFreeVariablesHelper boundVariables condition.value

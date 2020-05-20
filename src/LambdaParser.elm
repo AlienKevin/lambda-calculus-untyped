@@ -2,7 +2,7 @@ module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, sh
 
 
 import Parser.Advanced exposing (..)
-import Set
+import Set exposing (Set)
 import List.Extra
 import Location exposing (..)
 
@@ -15,6 +15,7 @@ type Context
   = CVariable
   | CAbstraction
   | CApplication
+  | CIf
 
 
 type Problem
@@ -24,6 +25,8 @@ type Problem
   | ExpectingEqual
   | ExpectingLeftParen
   | ExpectingRightParen
+  | ExpectingColon
+  | ExpectingArrow
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
   | ExpectingEndOfMultiLineComment
@@ -31,6 +34,12 @@ type Problem
   | ExpectingDefinition
   | ExpectingEndOfDefinition
   | ExpectingEndOfExpression
+  | ExpectingTyBool
+  | ExpectingIf
+  | ExpectingThen
+  | ExpectingElse
+  | ExpectingTrue
+  | ExpectingFalse
 
 
 type alias Def =
@@ -41,8 +50,21 @@ type alias Def =
 
 type Expr
   = EVariable (Located String)
-  | EAbstraction (Located String) (Located Expr)
+  | EAbstraction (Located String) (Located Type) (Located Expr)
   | EApplication (Located Expr) (Located Expr)
+  | EBool Bool
+  | EIf (Located Expr) (Located Expr) (Located Expr) 
+
+
+type Type
+  = TyBool
+  | TyFunc (Located Type) (Located Type)
+
+
+reserved : Set String
+reserved =
+  Set.fromList
+    [ "if", "then", "else", "true", "false" ]
 
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
@@ -70,7 +92,7 @@ parseDefOrExpr exprName src =
   run
     ( succeed identity
       |. sps
-      |= optional (fakeLocated exprName)
+      |= optionalWithDefault (fakeLocated exprName)
         ( succeed identity
           |= parseName
           |. sps
@@ -199,6 +221,8 @@ internalParseExprHelper =
     |= oneOf
       [ parseAbstraction
       , parseGroup
+      , parseIf
+      , parseBool
       , parseVariable
       ]
     |> andThen
@@ -212,6 +236,8 @@ internalParseExprHelper =
               |= ( checkIndent <| oneOf
                 [ parseAbstraction
                 , parseGroup
+                , parseIf
+                , parseBool
                 , parseVariable
                 ]
               )
@@ -245,9 +271,89 @@ parseAbstraction =
     |. sps
     |= parseName
     |. sps
+    |. symbol (Token ":" ExpectingColon)
+    |. sps
+    |= parseType
+    |. sps
     |. symbol (Token "." ExpectingDot)
     |. sps
     |= lazy (\_ -> internalParseExpr)
+
+
+parseIf : LambdaParser (Located Expr)
+parseIf =
+  inContext CIf <|
+  located <|
+  succeed EIf
+    |. keyword (Token "if" ExpectingIf)
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+    |. sps
+    |. keyword (Token "then" ExpectingThen)
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+    |. sps
+    |. keyword (Token "else" ExpectingElse)
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+
+
+parseBool : LambdaParser (Located Expr)
+parseBool =
+  located <|
+  map EBool <|
+  oneOf
+    [ map (\_ -> True) <| keyword (Token "true" ExpectingTrue)
+    , map (\_ -> False) <| keyword (Token "false" ExpectingFalse)
+    ]
+
+
+parseType : LambdaParser (Located Type)
+parseType =
+  succeed
+    (\t1 maybeT2 ->
+      case maybeT2 of
+        Nothing ->
+          t1
+        
+        Just t2 ->
+          withLocation
+          { from =
+            t1.from
+          , to =
+            t2.to
+          , value =
+            ()
+          }
+          <| TyFunc t1 t2
+    )
+    |= oneOf
+      [ parseBaseType
+      , parseGroupType
+      ]
+    |= (optional <|
+      succeed identity
+        |. sps
+        |. symbol (Token "->" ExpectingArrow)
+        |. sps
+        |= lazy (\_ -> parseType)
+    )
+
+
+parseBaseType : LambdaParser (Located Type)
+parseBaseType =
+  located <|
+  succeed TyBool
+    |. keyword (Token "Bool" ExpectingTyBool)
+
+
+parseGroupType : LambdaParser (Located Type)
+parseGroupType =
+  located <|
+  succeed identity
+    |. symbol (Token "(" ExpectingLeftParen)
+    |= lazy (\_ -> map .value parseType)
+    |. symbol (Token ")" ExpectingRightParen)
 
 
 parseVariable : LambdaParser (Located Expr)
@@ -269,7 +375,7 @@ parseName =
     , inner =
       Char.isAlphaNum
     , reserved =
-      Set.empty
+      reserved
     , expecting =
       ExpectingVariable
     }
@@ -388,6 +494,12 @@ showProblem p =
 
     ExpectingRightParen ->
       "a ')'"
+
+    ExpectingColon ->
+      "a ':'"
+
+    ExpectingArrow ->
+      "a '->'"
     
     ExpectingStartOfLineComment ->
       "the start of a single-line comment '--'"
@@ -410,6 +522,24 @@ showProblem p =
     ExpectingEndOfExpression ->
       "the end of the expression"
 
+    ExpectingTyBool ->
+      "a type 'Bool'"
+
+    ExpectingIf ->
+      "a 'if'"
+  
+    ExpectingThen ->
+      "a 'then'"
+    
+    ExpectingElse ->
+      "a 'else'"
+
+    ExpectingTrue ->
+      "a 'true'"
+    
+    ExpectingFalse ->
+      "a 'false'"
+
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
 showProblemContextStack contexts =
@@ -427,6 +557,9 @@ showProblemContext context =
     
     CAbstraction ->
       "abstraction"
+
+    CIf ->
+      "if expression"
 
 
 showProblemLocation : Int -> Int -> String -> String
@@ -474,7 +607,7 @@ showExpr expr =
     
     EApplication e1 e2 ->
       ( case e1.value of
-        EAbstraction _ _ ->
+        EAbstraction _ _ _ ->
           "(" ++ showExpr e1.value ++ ")"
         
         _ ->
@@ -488,8 +621,37 @@ showExpr expr =
         _ ->
           "(" ++ showExpr e2.value ++ ")"
     
-    EAbstraction boundVar innerExpr ->
-      "\\" ++ boundVar.value ++ ". " ++ showExpr innerExpr.value
+    EAbstraction boundVar boundType innerExpr ->
+      "\\" ++ boundVar.value ++ ":" ++ showType boundType.value ++ ". " ++ showExpr innerExpr.value
+
+    EBool bool ->
+      if bool then
+        "true"
+      else
+        "false"
+    
+    EIf condition thenBranch elseBranch ->
+      "if " ++ showExpr condition.value
+      ++ " then " ++ showExpr thenBranch.value
+      ++ " else " ++ showExpr elseBranch.value
+
+
+showType : Type -> String
+showType t =
+  case t of
+    TyBool ->
+      "Bool"
+
+    TyFunc t1 t2 ->
+      ( case t1.value of
+        TyFunc _ _ ->
+          "(" ++ showType t1.value ++ ")"
+        
+        _ ->
+          showType t1.value
+      )
+      ++ "->"
+      ++ showType t2.value
 
 
 located : LambdaParser a -> LambdaParser (Located a)
@@ -511,9 +673,17 @@ fakeDef =
   , expr = fakeLocatedExpr
   }
 
-optional : a -> LambdaParser a -> LambdaParser a
-optional default parser =
+optionalWithDefault : a -> LambdaParser a -> LambdaParser a
+optionalWithDefault default parser =
   oneOf
     [ backtrackable parser
     , succeed default
+    ]
+
+
+optional : LambdaParser a -> LambdaParser (Maybe a)
+optional parser =
+  oneOf
+    [ backtrackable (map Just parser)
+    , succeed Nothing
     ]

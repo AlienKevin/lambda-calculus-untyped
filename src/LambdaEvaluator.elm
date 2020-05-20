@@ -73,6 +73,7 @@ type Term
   | TmBool Bool
   | TmInt Int
   | TmIf (Located Term) (Located Term) (Located Term)
+  | TmAdd (Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -119,6 +120,11 @@ termToExpr names t =
       (termToExpr names condition)
       (termToExpr names thenBranch)
       (termToExpr names elseBranch)
+
+    TmAdd left right ->
+      EAdd
+      (termToExpr names left)
+      (termToExpr names right)
     
     TmBool bool ->
       EBool bool
@@ -146,6 +152,11 @@ termToExprDebug names t =
       (termToExprDebug names condition)
       (termToExprDebug names thenBranch)
       (termToExprDebug names elseBranch)
+
+    TmAdd left right ->
+      EAdd
+      (termToExprDebug names left)
+      (termToExprDebug names right)
     
     TmBool bool ->
       EBool bool
@@ -205,6 +216,11 @@ exprToTerm ctx expr =
       (exprToTerm ctx thenBranch)
       (exprToTerm ctx elseBranch)
 
+    EAdd left right ->
+      TmAdd
+      (exprToTerm ctx left)
+      (exprToTerm ctx right)
+
     EBool bool ->
       TmBool bool
 
@@ -258,23 +274,8 @@ evalTermCallByValueHelper ctx t =
           withLocation t <| TmApplication newT1 t2
         )
 
-    TmIf condition thenBranch elseBranch ->
-      case condition.value of
-        TmBool bool ->
-          if bool then
-            Ok <| unwrapResult <| evalTermCallByValueHelper ctx thenBranch
-          else
-            Ok <| unwrapResult <| evalTermCallByValueHelper ctx elseBranch
-
-        _ ->
-          evalTermCallByValueHelper ctx condition |>
-          Result.map
-          (\newCondition ->
-            withLocation t <| TmIf newCondition thenBranch elseBranch
-          )
-    
     _ ->
-      Err t
+      commonEval evalTermCallByValueHelper ctx t
 
 
 evalTermCallByName : Ctx -> Located Term -> Located Term
@@ -317,23 +318,8 @@ evalTermCallByNameHelper ctx t =
           withLocation t <| TmApplication newT1 t2
         )
 
-    TmIf condition thenBranch elseBranch ->
-      case condition.value of
-        TmBool bool ->
-          if bool then
-            Ok <| unwrapResult <| evalTermCallByNameHelper ctx thenBranch
-          else
-            Ok <| unwrapResult <| evalTermCallByNameHelper ctx elseBranch
-
-        _ ->
-          evalTermCallByNameHelper ctx condition |>
-          Result.map
-          (\newCondition ->
-            withLocation t <| TmIf newCondition thenBranch elseBranch
-          )
-    
     _ ->
-      Err t
+      commonEval evalTermCallByNameHelper ctx t
 
 
 evalTermFull : Ctx -> Located Term -> Located Term
@@ -375,19 +361,47 @@ evalTermFullHelper ctx t =
       )
       (evalTermFullHelper ctx t1)
 
+    _ ->
+      commonEval evalTermFullHelper ctx t
+
+
+commonEval : (Ctx -> Located Term -> Result (Located Term) (Located Term)) -> Ctx -> Located Term -> Result (Located Term) (Located Term)
+commonEval f ctx t =
+  case t.value of
     TmIf condition thenBranch elseBranch ->
       case condition.value of
         TmBool bool ->
           if bool then
-            Ok <| unwrapResult <| evalTermFullHelper ctx thenBranch
+            Ok <| unwrapResult <| f ctx thenBranch
           else
-            Ok <| unwrapResult <| evalTermFullHelper ctx elseBranch
+            Ok <| unwrapResult <| f ctx elseBranch
 
         _ ->
-          evalTermFullHelper ctx condition |>
+          f ctx condition |>
           Result.map
           (\newCondition ->
             withLocation t <| TmIf newCondition thenBranch elseBranch
+          )
+
+    TmAdd left right ->
+      case left.value of
+        TmInt leftValue ->
+          case right.value of
+            TmInt rightValue ->
+              Ok <| withLocation t <| TmInt <| leftValue + rightValue
+            
+            _ ->
+              f ctx right |>
+              Result.map
+              (\newRight ->
+                withLocation t <| TmAdd left newRight
+              )
+
+        _ ->
+          f ctx left |>
+          Result.map
+          (\newLeft ->
+            withLocation t <| TmAdd newLeft right
           )
 
     _ ->
@@ -442,6 +456,9 @@ isValue t =
     TmBool _ ->
       True
     
+    TmInt _ ->
+      True
+    
     _ ->
       False
 
@@ -467,6 +484,11 @@ termShift d c t =
       (termShift d c condition)
       (termShift d c thenBranch)
       (termShift d c elseBranch)
+
+    TmAdd left right ->
+      TmAdd
+      (termShift d c left)
+      (termShift d c right)
 
     TmBool _ ->
       t.value
@@ -498,6 +520,11 @@ termSubst j s t =
       (termSubst j s condition)
       (termSubst j s thenBranch)
       (termSubst j s elseBranch)
+    
+    TmAdd left right ->
+      TmAdd
+      (termSubst j s left)
+      (termSubst j s right)
 
     TmBool _ ->
       t.value

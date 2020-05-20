@@ -253,10 +253,11 @@ internalParseExprHelper =
 
 parseGroup : LambdaParser (Located Expr)
 parseGroup =
+  located <|
   succeed identity
     |. symbol (Token "(" ExpectingLeftParen)
     |. sps
-    |= lazy (\_ -> internalParseExpr)
+    |= lazy (\_ -> map .value internalParseExpr)
     |. sps
     |. symbol (Token ")" ExpectingRightParen)
 

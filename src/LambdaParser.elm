@@ -260,6 +260,7 @@ parseInt : LambdaParser (Located Expr)
 parseInt =
   located <|
   map EInt <|
+  backtrackable <|
   int ExpectingInt ExpectingInt
 
 

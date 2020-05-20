@@ -3,7 +3,7 @@ module LambdaDebug exposing (main)
 
 import Html
 import LambdaParser
--- import LambdaChecker
+import LambdaChecker
 -- import LambdaEvaluator
 
 
@@ -29,8 +29,9 @@ main =
         Html.div []
           [ Html.h1 [] [ Html.text "Parse tree:"]
           , Html.pre [] [ Html.text <| LambdaParser.showDefs defs ]
-          -- , case LambdaChecker.checkDefs defs of
-          --   [] ->
+          , case LambdaChecker.checkDefs defs of
+            [] ->
+              Html.text "✔ Passsed check!"
           --     let
           --       resultDefs =
           --         LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
@@ -42,8 +43,8 @@ main =
           --       ]
           --     ]
             
-          --   problems ->
-          --     Html.pre [] [ Html.text <| LambdaChecker.showProblemsWithSingleSource source problems ]
+            problems ->
+              Html.pre [] [ Html.text <| LambdaChecker.showProblemsWithSingleSource source problems ]
           ]
     ]
 

@@ -11,6 +11,7 @@ import List.Extra
 type Problem
   = DuplicatedDefinition (Int, Located String) (Int, Located String)
   | UndefinedVariable (Located String)
+  | TypeError (Located String)
   | ExpectingTyFunc (Located Type)
   | ExpectingTyBool (Located Type)
   | MismatchedType (Located Type) (Located Type)
@@ -125,7 +126,12 @@ getType : Ctx -> Located Expr -> Result Problem (Located Type)
 getType ctx expr =
   case expr.value of
     EVariable name ->
-      Ok <| withLocation expr <| getTypeFromContext ctx name.value
+      case getTypeFromContext ctx name of
+        Nothing ->
+          Err <| TypeError name
+
+        Just ty ->
+          Ok <| withLocation expr ty
 
     EAbstraction boundVar boundType innerExpr ->
       let
@@ -209,11 +215,10 @@ addBinding ctx name ty =
   (name, ty) :: ctx
 
 
-getTypeFromContext : Ctx -> String -> Type
+getTypeFromContext : Ctx -> Located String -> Maybe Type
 getTypeFromContext ctx name =
-  Maybe.withDefault TyBool <| -- impossible
   Maybe.map Tuple.second <|
-  List.Extra.find (\(currentName, _) -> currentName == name) ctx
+  List.Extra.find (\(currentName, _) -> currentName == name.value) ctx
 
 
 showProblems : List String -> Int -> List Problem -> String
@@ -327,6 +332,13 @@ showProblemWithSingleSourceHelper src problem =
       , showLocation src ty2
       , "but got " ++ showType ty2.value ++ "."
       , "Hint: Try changing it to a " ++ showType ty1.value ++ "."
+      ]
+
+    TypeError variable ->
+      [ "-- TYPE ERROR\n"
+      , "I found a variable that evaluates to a type error:"
+      , showLocation src variable
+      , "Hint: Try fixing the type error in the definition of `" ++ variable.value ++ "` first."
       ]
 
 

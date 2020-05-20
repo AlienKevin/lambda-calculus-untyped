@@ -2,6 +2,7 @@ module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, sh
 
 
 import Parser.Advanced exposing (..)
+import Pratt.Advanced as Pratt
 import Set exposing (Set)
 import List.Extra
 import Location exposing (..)
@@ -177,6 +178,24 @@ internalParseDef =
 internalParseExpr : LambdaParser (Located Expr)
 internalParseExpr =
   let
+    subexpr =
+      Pratt.literal
+  in
+  Pratt.expression
+    { oneOf =
+      [ subexpr parseApplication
+      , subexpr parseBool
+      , subexpr parseInt
+      ]
+    , andThenOneOf =
+      []
+    , spaces = sps
+    }
+
+
+parseApplication : LambdaParser (Located Expr)
+parseApplication =
+  let
     formApplication : Located Expr -> List (Located Expr) -> (Located Expr)
     formApplication lastE es =
       case es of
@@ -214,11 +233,11 @@ internalParseExpr =
             formApplication e1 restEs
       )
     )
-    internalParseExprHelper
+    parseApplicationHelper
 
 
-internalParseExprHelper : LambdaParser (List (Located Expr))
-internalParseExprHelper =
+parseApplicationHelper : LambdaParser (List (Located Expr))
+parseApplicationHelper =
   checkIndent <|
   ( succeed identity
     |= oneOf

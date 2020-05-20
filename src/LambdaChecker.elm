@@ -1,4 +1,4 @@
-module LambdaChecker exposing (checkDefs, checkDef, checkExpr, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
+module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
 
 
 import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..))
@@ -18,6 +18,16 @@ type Problem
 
 checkDefs : List Def -> List Problem
 checkDefs defs =
+  case checkDefsNames defs of
+    [] ->
+      checkDefsTypes defs
+    
+    namesProblems ->
+      namesProblems
+
+
+checkDefsNames : List Def -> List Problem
+checkDefsNames defs =
   let
     allNames =
       List.foldl
@@ -33,7 +43,7 @@ checkDefs defs =
       if isFakeLocated def.name then
         (problems, names)
       else
-        Tuple.mapFirst ((++) <| checkExpr (Dict.filter (\_ name -> name /= def.name) allNames) def.expr)
+        Tuple.mapFirst ((++) <| checkDef (Dict.filter (\_ name -> name /= def.name) allNames) def)
         ( case Dict.get def.name.value names of
           Nothing ->
             ( problems
@@ -50,6 +60,30 @@ checkDefs defs =
     defs
 
 
+checkDefsTypes : List Def -> List Problem
+checkDefsTypes defs =
+  let
+    sortedDefs =
+      sortDefs defs
+  in
+  Tuple.first <|
+  List.foldl
+    (\def (problems, ctx) ->
+      case getType ctx def.expr of
+        Err typeProblem ->
+          ( typeProblem :: problems
+          , ctx
+          )
+        
+        Ok ty ->
+          ( problems
+          , addBinding ctx def.name.value ty.value
+          )
+    )
+    ([], [])
+    sortedDefs
+
+
 checkDef : Dict String (Located String) -> Def -> List Problem
 checkDef names def =
   checkExpr names def.expr
@@ -57,7 +91,7 @@ checkDef names def =
 
 checkExpr : Dict String (Located String) -> Located Expr -> List Problem
 checkExpr names expr =
-  ( case expr.value of
+  case expr.value of
     EVariable name ->
       if Dict.member name.value names then
         []
@@ -78,20 +112,6 @@ checkExpr names expr =
       checkExpr names condition
       ++ checkExpr names thenBranch
       ++ checkExpr names elseBranch
-  )
-  |> (\problems ->
-    case problems of
-      [] ->
-        case getType [] expr of
-          Err typeProblem ->
-            [ typeProblem ]
-          
-          Ok _ ->
-            []
-      
-      _ ->
-        problems
-  )
 
 
 type alias Ctx

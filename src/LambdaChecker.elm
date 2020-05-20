@@ -107,6 +107,9 @@ checkExpr names expr =
 
     EBool _ ->
       []
+
+    EInt _ ->
+      []
     
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
@@ -145,7 +148,7 @@ getType ctx expr =
           case ty1.value of
             TyFunc fromType toType ->
               if areEqualTypes fromType.value ty2.value then
-                Ok toType
+                Ok <| withLocation expr <| toType.value
               else
                 Err <| MismatchedType fromType ty2
 
@@ -180,11 +183,17 @@ getType ctx expr =
     EBool _ ->
       Ok <| withLocation expr TyBool
 
+    EInt _ ->
+      Ok <| withLocation expr TyInt
+
 
 areEqualTypes : Type -> Type -> Bool
 areEqualTypes ty1 ty2 =
   case (ty1, ty2) of
     (TyBool, TyBool) ->
+      True
+
+    (TyInt, TyInt) ->
       True
     
     (TyFunc fromType1 toType1, TyFunc fromType2 toType2) ->
@@ -313,7 +322,7 @@ showProblemWithSingleSourceHelper src problem =
       ]
 
     MismatchedType ty1 ty2 ->
-      [ "-- EXPECTING FUNCTION TYPE\n"
+      [ "-- MISMATCHED TYPES\n"
       , "I'm expecting a " ++ showType ty1.value ++ " type here:"
       , showLocation src ty2
       , "but got " ++ showType ty2.value ++ "."
@@ -371,6 +380,9 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesHelper boundVariables func.value ++ getFreeVariablesHelper boundVariables arg.value
 
     EBool _ ->
+      []
+    
+    EInt _ ->
       []
 
     EIf condition thenBranch elseBranch ->

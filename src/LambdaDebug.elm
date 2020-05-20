@@ -4,11 +4,12 @@ module LambdaDebug exposing (main)
 import Html
 import LambdaParser
 import LambdaChecker
--- import LambdaEvaluator
+import LambdaEvaluator
 
 
 source =
-  "id = if true then \\x:(Bool-> Bool) -> Bool. x else \\y:(Bool->Bool)->Bool. y"
+  -- "v = (\\x:Bool->Bool. x) (\\x:Bool. false) true"
+  "id = if (\\x:Bool->Bool. x) (\\x:Bool. false) true then \\x:(Bool-> Bool) -> Bool. x else \\y:(Bool->Bool)->Bool. y"
 
 main =
   let
@@ -31,17 +32,17 @@ main =
           , Html.pre [] [ Html.text <| LambdaParser.showDefs defs ]
           , case LambdaChecker.checkDefs defs of
             [] ->
-              Html.text "✔ Passsed check!"
-          --     let
-          --       resultDefs =
-          --         LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
-          --     in
-          --     Html.div []
-          --     [ Html.h1 [] [ Html.text "Evaluation result:" ]
-          --     , Html.pre []
-          --       [ Html.text <| LambdaParser.showDefs resultDefs
-          --       ]
-          --     ]
+              -- Html.text "✔ Passsed check!"
+              let
+                resultDefs =
+                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByName defs
+              in
+              Html.div []
+              [ Html.h1 [] [ Html.text "Evaluation result:" ]
+              , Html.pre []
+                [ Html.text <| LambdaParser.showDefs resultDefs
+                ]
+              ]
             
             problems ->
               Html.pre [] [ Html.text <| LambdaChecker.showProblemsWithSingleSource source problems ]

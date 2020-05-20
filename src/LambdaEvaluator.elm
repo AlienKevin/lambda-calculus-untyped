@@ -71,6 +71,7 @@ type Term
   | TmAbstraction (Located String) (Located Type) (Located Term)
   | TmApplication (Located Term) (Located Term)
   | TmBool Bool
+  | TmInt Int
   | TmIf (Located Term) (Located Term) (Located Term)
 
 
@@ -122,6 +123,9 @@ termToExpr names t =
     TmBool bool ->
       EBool bool
 
+    TmInt int ->
+      EInt int
+
 
 -- show de brujin index instead of transforming to names
 termToExprDebug : List String -> Located Term -> Located Expr
@@ -145,6 +149,9 @@ termToExprDebug names t =
     
     TmBool bool ->
       EBool bool
+
+    TmInt int ->
+      EInt int
 
 
 showTermDebug : Term -> String
@@ -200,6 +207,9 @@ exprToTerm ctx expr =
 
     EBool bool ->
       TmBool bool
+
+    EInt int ->
+      TmInt int
 
 
 evalTermCallByValue : Ctx -> Located Term -> Located Term
@@ -461,6 +471,9 @@ termShift d c t =
     TmBool _ ->
       t.value
 
+    TmInt _ ->
+      t.value
+
 
 termSubst : Int -> Located Term -> Located Term -> Located Term
 termSubst j s t =
@@ -487,5 +500,8 @@ termSubst j s t =
       (termSubst j s elseBranch)
 
     TmBool _ ->
+      t.value
+
+    TmInt _ ->
       t.value
     

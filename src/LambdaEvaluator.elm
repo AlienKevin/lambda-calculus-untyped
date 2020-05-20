@@ -2,9 +2,9 @@ module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
-import LambdaParser exposing (fakeDef, Def, Expr(..))
+import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type)
 import LambdaChecker exposing (sortDefs)
-import Location exposing (withLocation, Located)
+import Location exposing (withLocation, fakeLocated, Located)
 import List.Extra
 
 
@@ -68,8 +68,10 @@ internalEvalDef strategy ctx def =
 
 type Term
   = TmVariable Int
-  | TmAbstraction (Located String) (Located Term)
+  | TmAbstraction (Located String) (Located Type) (Located Term)
   | TmApplication (Located Term) (Located Term)
+  | TmBool Bool
+  | TmIf (Located Term) (Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -101,15 +103,24 @@ termToExpr names t =
     TmVariable index ->
       EVariable <| withLocation t <| Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
     
-    TmAbstraction boundVar t1 ->
+    TmAbstraction boundVar boundType t1 ->
       let
         (newNames, newName) =
           pickNewName names boundVar.value
       in
-      EAbstraction (withLocation boundVar newName) <| termToExpr newNames t1
+      EAbstraction (withLocation boundVar newName) boundType <| termToExpr newNames t1
   
     TmApplication t1 t2 ->
       EApplication (termToExpr names t1) (termToExpr names t2)
+
+    TmIf condition thenBranch elseBranch ->
+      EIf
+      (termToExpr names condition)
+      (termToExpr names thenBranch)
+      (termToExpr names elseBranch)
+    
+    TmBool bool ->
+      EBool bool
 
 
 -- show de brujin index instead of transforming to names
@@ -120,11 +131,25 @@ termToExprDebug names t =
     TmVariable index ->
       EVariable <| withLocation t <| String.fromInt index
     
-    TmAbstraction boundVar t1 ->
-      EAbstraction (withLocation boundVar "") <| termToExpr names t1
+    TmAbstraction boundVar boundType t1 ->
+      EAbstraction (withLocation boundVar "") boundType <| termToExprDebug names t1
   
     TmApplication t1 t2 ->
-      EApplication (termToExpr names t1) (termToExpr names t2)
+      EApplication (termToExprDebug names t1) (termToExprDebug names t2)
+
+    TmIf condition thenBranch elseBranch ->
+      EIf
+      (termToExprDebug names condition)
+      (termToExprDebug names thenBranch)
+      (termToExprDebug names elseBranch)
+    
+    TmBool bool ->
+      EBool bool
+
+
+showTermDebug : Term -> String
+showTermDebug tm =
+  showExpr <| .value <| termToExprDebug [] <| fakeLocated tm
 
 
 pickNewName : List String -> String -> (List String, String)
@@ -153,19 +178,28 @@ exprToTerm ctx expr =
         Just s ->
           s.value
 
-    EAbstraction boundVar e1 ->
+    EAbstraction boundVar boundType e1 ->
       let
         newCtx =
           ctx |>
           Dict.map (\_ s -> termShift 1 0 s) |>
           Dict.insert boundVar.value (withLocation boundVar <| TmVariable 0)
       in
-      TmAbstraction boundVar <| exprToTerm newCtx e1
+      TmAbstraction boundVar boundType <| exprToTerm newCtx e1
 
     EApplication e1 e2 ->
       TmApplication
       (exprToTerm ctx e1)
       (exprToTerm ctx e2)
+
+    EIf condition thenBranch elseBranch ->
+      TmIf
+      (exprToTerm ctx condition)
+      (exprToTerm ctx thenBranch)
+      (exprToTerm ctx elseBranch)
+
+    EBool bool ->
+      TmBool bool
 
 
 evalTermCallByValue : Ctx -> Located Term -> Located Term
@@ -186,13 +220,13 @@ evalTermCallByValue ctx0 t0 =
   eval 0 ctx0 t0
 
 
-evalTermCallByValueHelper : Ctx -> Located Term -> Result () (Located Term)
+evalTermCallByValueHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
 evalTermCallByValueHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
       if isValue t2 then
         case t1.value of
-          TmAbstraction _ t12 ->
+          TmAbstraction _ _ t12 ->
             Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
           
           _ ->
@@ -213,9 +247,24 @@ evalTermCallByValueHelper ctx t =
         (\newT1 ->
           withLocation t <| TmApplication newT1 t2
         )
+
+    TmIf condition thenBranch elseBranch ->
+      case condition.value of
+        TmBool bool ->
+          if bool then
+            Ok <| unwrapResult <| evalTermCallByValueHelper ctx thenBranch
+          else
+            Ok <| unwrapResult <| evalTermCallByValueHelper ctx elseBranch
+
+        _ ->
+          evalTermCallByValueHelper ctx condition |>
+          Result.map
+          (\newCondition ->
+            withLocation t <| TmIf newCondition thenBranch elseBranch
+          )
     
     _ ->
-      Err ()
+      Err t
 
 
 evalTermCallByName : Ctx -> Located Term -> Located Term
@@ -236,13 +285,13 @@ evalTermCallByName ctx0 t0 =
   eval 0 ctx0 t0
 
 
-evalTermCallByNameHelper : Ctx -> Located Term -> Result () (Located Term)
+evalTermCallByNameHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
 evalTermCallByNameHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
       if isValue t2 then
         case t1.value of
-          TmAbstraction _ t12 ->
+          TmAbstraction _ _ t12 ->
             Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
           
           _ ->
@@ -257,9 +306,24 @@ evalTermCallByNameHelper ctx t =
         (\newT1 ->
           withLocation t <| TmApplication newT1 t2
         )
+
+    TmIf condition thenBranch elseBranch ->
+      case condition.value of
+        TmBool bool ->
+          if bool then
+            Ok <| unwrapResult <| evalTermCallByNameHelper ctx thenBranch
+          else
+            Ok <| unwrapResult <| evalTermCallByNameHelper ctx elseBranch
+
+        _ ->
+          evalTermCallByNameHelper ctx condition |>
+          Result.map
+          (\newCondition ->
+            withLocation t <| TmIf newCondition thenBranch elseBranch
+          )
     
     _ ->
-      Err ()
+      Err t
 
 
 evalTermFull : Ctx -> Located Term -> Located Term
@@ -285,7 +349,7 @@ evalTermFullHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
       case t1.value of
-        TmAbstraction _ t12 ->
+        TmAbstraction _ _ t12 ->
           Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
         
         _ ->
@@ -294,15 +358,40 @@ evalTermFullHelper ctx t =
           (evalTermFullHelper ctx t1)
           (evalTermFullHelper ctx t2)
     
-    TmAbstraction boundVar t1 ->
+    TmAbstraction boundVar boundType t1 ->
       mapBothResults
       (\newT1 ->
-        withLocation t <| TmAbstraction boundVar newT1
+        withLocation t <| TmAbstraction boundVar boundType newT1
       )
       (evalTermFullHelper ctx t1)
 
+    TmIf condition thenBranch elseBranch ->
+      case condition.value of
+        TmBool bool ->
+          if bool then
+            Ok <| unwrapResult <| evalTermFullHelper ctx thenBranch
+          else
+            Ok <| unwrapResult <| evalTermFullHelper ctx elseBranch
+
+        _ ->
+          evalTermFullHelper ctx condition |>
+          Result.map
+          (\newCondition ->
+            withLocation t <| TmIf newCondition thenBranch elseBranch
+          )
+
     _ ->
       Err t
+
+
+unwrapResult : Result a a -> a
+unwrapResult r =
+  case r of
+    Ok o ->
+      o
+    
+    Err e ->
+      e
 
 
 mapBothResults : (a -> b) -> Result a a -> Result b b
@@ -337,7 +426,10 @@ combineResults f r1 r2 =
 isValue : Located Term -> Bool
 isValue t =
   case t.value of
-    TmAbstraction _ _ ->
+    TmAbstraction _ _ _ ->
+      True
+
+    TmBool _ ->
       True
     
     _ ->
@@ -354,11 +446,20 @@ termShift d c t =
       else
         TmVariable <| k + d
     
-    TmAbstraction boundVar t1 ->
-      TmAbstraction boundVar <| termShift d (c + 1) t1
+    TmAbstraction boundVar boundType t1 ->
+      TmAbstraction boundVar boundType <| termShift d (c + 1) t1
 
     TmApplication t1 t2 ->
       TmApplication (termShift d c t1) (termShift d c t2)
+
+    TmIf condition thenBranch elseBranch ->
+      TmIf
+      (termShift d c condition)
+      (termShift d c thenBranch)
+      (termShift d c elseBranch)
+
+    TmBool _ ->
+      t.value
 
 
 termSubst : Int -> Located Term -> Located Term -> Located Term
@@ -371,11 +472,20 @@ termSubst j s t =
       else
         t.value
     
-    TmAbstraction boundVar t1 ->
-      TmAbstraction boundVar <| termSubst (j + 1) (termShift 1 0 s) t1
+    TmAbstraction boundVar boundType t1 ->
+      TmAbstraction boundVar boundType <| termSubst (j + 1) (termShift 1 0 s) t1
 
     TmApplication t1 t2 ->
       TmApplication
       (termSubst j s t1)
       (termSubst j s t2)
+
+    TmIf condition thenBranch elseBranch ->
+      TmIf
+      (termSubst j s condition)
+      (termSubst j s thenBranch)
+      (termSubst j s elseBranch)
+
+    TmBool _ ->
+      t.value
     

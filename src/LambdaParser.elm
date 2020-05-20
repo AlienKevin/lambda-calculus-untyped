@@ -40,6 +40,7 @@ type Problem
   | ExpectingElse
   | ExpectingTrue
   | ExpectingFalse
+  | ExpectingInt
 
 
 type alias Def =
@@ -53,11 +54,13 @@ type Expr
   | EAbstraction (Located String) (Located Type) (Located Expr)
   | EApplication (Located Expr) (Located Expr)
   | EBool Bool
+  | EInt Int
   | EIf (Located Expr) (Located Expr) (Located Expr) 
 
 
 type Type
   = TyBool
+  | TyInt
   | TyFunc (Located Type) (Located Type)
 
 
@@ -223,6 +226,7 @@ internalParseExprHelper =
       , parseGroup
       , parseIf
       , parseBool
+      , parseInt
       , parseVariable
       ]
     |> andThen
@@ -238,6 +242,7 @@ internalParseExprHelper =
                 , parseGroup
                 , parseIf
                 , parseBool
+                , parseInt
                 , parseVariable
                 ]
               )
@@ -249,6 +254,13 @@ internalParseExprHelper =
         )
     )
   )
+
+
+parseInt : LambdaParser (Located Expr)
+parseInt =
+  located <|
+  map EInt <|
+  int ExpectingInt ExpectingInt
 
 
 parseGroup : LambdaParser (Located Expr)
@@ -344,8 +356,10 @@ parseType =
 parseBaseType : LambdaParser (Located Type)
 parseBaseType =
   located <|
-  succeed TyBool
-    |. keyword (Token "Bool" ExpectingTyBool)
+  oneOf
+    [ map (\_ -> TyBool) <| keyword (Token "Bool" ExpectingTyBool)
+    , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyBool)
+    ]
 
 
 parseGroupType : LambdaParser (Located Type)
@@ -541,6 +555,9 @@ showProblem p =
     ExpectingFalse ->
       "a 'false'"
 
+    ExpectingInt ->
+      "an integer"
+
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
 showProblemContextStack contexts =
@@ -630,6 +647,9 @@ showExpr expr =
         "true"
       else
         "false"
+
+    EInt int ->
+      String.fromInt int
     
     EIf condition thenBranch elseBranch ->
       "if " ++ showExpr condition.value
@@ -642,6 +662,9 @@ showType t =
   case t of
     TyBool ->
       "Bool"
+
+    TyInt ->
+      "Int"
 
     TyFunc t1 t2 ->
       ( case t1.value of

@@ -116,6 +116,10 @@ checkExpr names expr =
     EAdd left right ->
       checkExpr names left
       ++ checkExpr names right
+
+    ESubtract left right ->
+      checkExpr names left
+      ++ checkExpr names right
     
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
@@ -192,31 +196,39 @@ getType ctx expr =
       )
 
     EAdd left right ->
-      getType ctx left |>
-      Result.andThen
-      (\leftType ->
-        case leftType.value of
-          TyInt ->
-            getType ctx right |>
-            Result.andThen
-            (\rightType ->
-              case rightType.value of
-                TyInt ->
-                  Ok <| withLocation expr TyInt
-                
-                _ ->
-                  Err <| ExpectingTyInt rightType
-            )
-          
-          _ ->
-            Err <| ExpectingTyInt leftType
-      )
+      getTypeFromBinaryInts ctx expr left right
+
+    ESubtract left right ->
+      getTypeFromBinaryInts ctx expr left right
 
     EBool _ ->
       Ok <| withLocation expr TyBool
 
     EInt _ ->
       Ok <| withLocation expr TyInt
+
+
+getTypeFromBinaryInts : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
+getTypeFromBinaryInts ctx expr left right =
+  getType ctx left |>
+    Result.andThen
+    (\leftType ->
+      case leftType.value of
+        TyInt ->
+          getType ctx right |>
+          Result.andThen
+          (\rightType ->
+            case rightType.value of
+              TyInt ->
+                Ok <| withLocation expr TyInt
+              
+              _ ->
+                Err <| ExpectingTyInt rightType
+          )
+        
+        _ ->
+          Err <| ExpectingTyInt leftType
+    )
 
 
 areEqualTypes : Type -> Type -> Bool
@@ -432,13 +444,22 @@ getFreeVariablesHelper boundVariables expr =
       []
 
     EAdd left right ->
-      getFreeVariablesHelper boundVariables left.value
-      ++ getFreeVariablesHelper boundVariables right.value
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    ESubtract left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
 
     EIf condition thenBranch elseBranch ->
       getFreeVariablesHelper boundVariables condition.value
       ++ getFreeVariablesHelper boundVariables thenBranch.value
       ++ getFreeVariablesHelper boundVariables elseBranch.value
+
+
+getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> List (Located String)
+getFreeVariablesBinaryHelper boundVariables left right =
+  getFreeVariablesHelper boundVariables left.value
+  ++ getFreeVariablesHelper boundVariables right.value
+
 
 
 type alias Dependencies =

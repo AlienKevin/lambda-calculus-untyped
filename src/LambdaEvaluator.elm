@@ -74,6 +74,7 @@ type Term
   | TmInt Int
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
+  | TmSubtract (Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -122,15 +123,23 @@ termToExpr names t =
       (termToExpr names elseBranch)
 
     TmAdd left right ->
-      EAdd
-      (termToExpr names left)
-      (termToExpr names right)
+      termToExprBinaryHelper names EAdd left right
+
+    TmSubtract left right ->
+      termToExprBinaryHelper names ESubtract left right
     
     TmBool bool ->
       EBool bool
 
     TmInt int ->
       EInt int
+
+
+termToExprBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
+termToExprBinaryHelper names f left right =
+  f
+    (termToExpr names left)
+    (termToExpr names right)
 
 
 -- show de brujin index instead of transforming to names
@@ -154,15 +163,23 @@ termToExprDebug names t =
       (termToExprDebug names elseBranch)
 
     TmAdd left right ->
-      EAdd
-      (termToExprDebug names left)
-      (termToExprDebug names right)
+      termToExprDebugBinaryHelper names EAdd left right
+      
+    TmSubtract left right ->
+      termToExprDebugBinaryHelper names ESubtract left right
     
     TmBool bool ->
       EBool bool
 
     TmInt int ->
       EInt int
+
+
+termToExprDebugBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
+termToExprDebugBinaryHelper names f left right =
+  f
+    (termToExprDebug names left)
+    (termToExprDebug names right)
 
 
 showTermDebug : Term -> String
@@ -217,15 +234,23 @@ exprToTerm ctx expr =
       (exprToTerm ctx elseBranch)
 
     EAdd left right ->
-      TmAdd
-      (exprToTerm ctx left)
-      (exprToTerm ctx right)
+      exprToTermBinaryHelper ctx TmAdd left right
+
+    ESubtract left right ->
+      exprToTermBinaryHelper ctx TmSubtract left right
 
     EBool bool ->
       TmBool bool
 
     EInt int ->
       TmInt int
+
+
+exprToTermBinaryHelper : Ctx -> (Located Term -> Located Term -> Term) -> Located Expr -> Located Expr -> Term
+exprToTermBinaryHelper ctx f left right =
+  f
+    (exprToTerm ctx left)
+    (exprToTerm ctx right)
 
 
 evalTermCallByValue : Ctx -> Located Term -> Located Term
@@ -384,28 +409,44 @@ commonEval f ctx t =
           )
 
     TmAdd left right ->
-      case left.value of
-        TmInt leftValue ->
-          case right.value of
-            TmInt rightValue ->
-              Ok <| withLocation t <| TmInt <| leftValue + rightValue
-            
-            _ ->
-              f ctx right |>
-              Result.map
-              (\newRight ->
-                withLocation t <| TmAdd left newRight
-              )
-
-        _ ->
-          f ctx left |>
-          Result.map
-          (\newLeft ->
-            withLocation t <| TmAdd newLeft right
-          )
+      commonEvalBinaryIntsHelper f ctx t TmAdd (+) left right
+    
+    TmSubtract left right ->
+      commonEvalBinaryIntsHelper f ctx t TmSubtract (-) left right
 
     _ ->
       Err t
+
+
+commonEvalBinaryIntsHelper :
+  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  -> Ctx
+  -> Located Term
+  -> (Located Term -> Located Term -> Term)
+  -> (Int -> Int -> Int)
+  -> Located Term
+  -> Located Term
+  -> Result (Located Term) (Located Term)
+commonEvalBinaryIntsHelper f ctx tm tmName op left right =
+  case left.value of
+    TmInt leftValue ->
+      case right.value of
+        TmInt rightValue ->
+          Ok <| withLocation tm <| TmInt <| op leftValue rightValue
+        
+        _ ->
+          f ctx right |>
+          Result.map
+          (\newRight ->
+            withLocation tm <| tmName left newRight
+          )
+
+    _ ->
+      f ctx left |>
+      Result.map
+      (\newLeft ->
+        withLocation tm <| tmName newLeft right
+      )
 
 
 unwrapResult : Result a a -> a
@@ -486,15 +527,23 @@ termShift d c t =
       (termShift d c elseBranch)
 
     TmAdd left right ->
-      TmAdd
-      (termShift d c left)
-      (termShift d c right)
+      termShiftBinaryHelper d c TmAdd left right
+
+    TmSubtract left right ->
+      termShiftBinaryHelper d c TmSubtract left right
 
     TmBool _ ->
       t.value
 
     TmInt _ ->
       t.value
+
+
+termShiftBinaryHelper : Int -> Int -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
+termShiftBinaryHelper d c f left right =
+  f
+  (termShift d c left)
+  (termShift d c right)
 
 
 termSubst : Int -> Located Term -> Located Term -> Located Term
@@ -522,13 +571,21 @@ termSubst j s t =
       (termSubst j s elseBranch)
     
     TmAdd left right ->
-      TmAdd
-      (termSubst j s left)
-      (termSubst j s right)
+      termSubstBinaryHelper j s TmAdd left right
+
+    TmSubtract left right ->
+      termSubstBinaryHelper j s TmSubtract left right
 
     TmBool _ ->
       t.value
 
     TmInt _ ->
       t.value
+
+
+termSubstBinaryHelper : Int -> Located Term -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
+termSubstBinaryHelper j s f left right =
+  f
+  (termSubst j s left)
+  (termSubst j s right)
     

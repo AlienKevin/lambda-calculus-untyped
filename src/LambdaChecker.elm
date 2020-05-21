@@ -1,7 +1,7 @@
 module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
 
 
-import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..))
+import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..), Comparison(..))
 import Dict exposing (Dict)
 import Location exposing (showLocation, isFakeLocated, withLocation, Located)
 import Set exposing (Set)
@@ -16,6 +16,7 @@ type Problem
   | ExpectingTyBool (Located Type)
   | ExpectingTyInt (Located Type)
   | MismatchedType (Located Type) (Located Type)
+  | CompareTyFunc (Located Type) (Located Type)
 
 
 checkDefs : List Def -> List Problem
@@ -125,6 +126,9 @@ checkExpr names expr =
     EDivision left right ->
       checkExprBinaryHelper names left right
     
+    EComparison _ left right ->
+      checkExprBinaryHelper names left right
+    
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
       ++ checkExpr names thenBranch
@@ -217,11 +221,42 @@ getType ctx expr =
     EDivision left right ->
       getTypeFromBinaryInts ctx expr left right
 
+    EComparison comp left right ->
+      case comp of
+        CompEQ ->
+          getTypeFromEquality ctx expr left right
+        
+        CompNE ->
+          getTypeFromEquality ctx expr left right
+      
+        _ ->
+          getTypeFromBinaryInts ctx expr left right
+
     EBool _ ->
       Ok <| withLocation expr TyBool
 
     EInt _ ->
       Ok <| withLocation expr TyInt
+
+
+getTypeFromEquality : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
+getTypeFromEquality ctx expr left right =
+  getType ctx left |>
+    Result.andThen
+    (\leftType ->
+      getType ctx right |>
+      Result.andThen
+      (\rightType ->
+        if areEqualTypes leftType.value rightType.value then
+          case leftType.value of
+            TyFunc _ _ ->
+              Err <| CompareTyFunc leftType rightType
+            _ ->
+              Ok <| withLocation expr TyInt
+        else
+          Err <| MismatchedType leftType rightType
+      )
+    )
 
 
 getTypeFromBinaryInts : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
@@ -403,6 +438,17 @@ showProblemWithSingleSourceHelper src problem =
       , "Hint: Try fixing the type error in the definition of `" ++ variable.value ++ "` first."
       ]
 
+    CompareTyFunc f1 f2 ->
+      [ "-- CAN'T COMPARE FUNCTIONS\n"
+      , "I found that you are trying to compare two functions."
+      , "The first function is here:"
+      , showLocation src f1
+      , "The second function is here:"
+      , showLocation src f2
+      , "General function equality is undecidable so it's not supported."
+      , "Hint: Try comparing anything that is not a function."
+      ]
+
 
 sortDefs : List Def -> List Def
 sortDefs defs =
@@ -469,6 +515,9 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesBinaryHelper boundVariables left right
 
     EDivision left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+    
+    EComparison _ left right ->
       getFreeVariablesBinaryHelper boundVariables left right
 
     EIf condition thenBranch elseBranch ->

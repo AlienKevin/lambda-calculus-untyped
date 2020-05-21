@@ -2,7 +2,7 @@ module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
-import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type)
+import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type, Comparison(..))
 import LambdaChecker exposing (sortDefs)
 import Location exposing (withLocation, fakeLocated, Located)
 import List.Extra
@@ -77,6 +77,7 @@ type Term
   | TmSubtract (Located Term) (Located Term)
   | TmMultiplication (Located Term) (Located Term)
   | TmDivision (Located Term) (Located Term)
+  | TmComparison Comparison (Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -135,6 +136,9 @@ termToExpr names t =
 
     TmDivision left right ->
       termToExprBinaryHelper names EDivision left right
+
+    TmComparison comp left right ->
+      termToExprBinaryHelper names (EComparison comp) left right
     
     TmBool bool ->
       EBool bool
@@ -181,6 +185,9 @@ termToExprDebug names t =
     
     TmDivision left right ->
       termToExprDebugBinaryHelper names EDivision left right
+
+    TmComparison comp left right ->
+      termToExprDebugBinaryHelper names (EComparison comp) left right
     
     TmBool bool ->
       EBool bool
@@ -258,6 +265,9 @@ exprToTerm ctx expr =
 
     EDivision left right ->
       exprToTermBinaryHelper ctx TmDivision left right
+
+    EComparison comp left right ->
+      exprToTermBinaryHelper ctx (TmComparison comp) left right
 
     EBool bool ->
       TmBool bool
@@ -439,9 +449,92 @@ commonEval f ctx t =
 
     TmDivision left right ->
       commonEvalBinaryIntsHelper f ctx t TmDivision (//) left right
+    
+    TmComparison comp left right ->
+      case comp of
+        CompEQ ->
+          commonEvalEqualityHelper f ctx t (TmComparison comp) (==) left right
+        
+        CompNE ->
+          commonEvalEqualityHelper f ctx t (TmComparison comp) (/=) left right
+
+        _ ->
+          let
+            compFunc =
+              case comp of
+                CompLT ->
+                  (<)
+                
+                CompLE ->
+                  (<=)
+                
+                CompGT ->
+                  (>)
+                
+                _ ->
+                  (>=)
+          in
+          commonEvalComparisonIntsHelper f ctx t (TmComparison comp) compFunc left right
 
     _ ->
       Err t
+
+
+commonEvalEqualityHelper :
+  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  -> Ctx
+  -> Located Term
+  -> (Located Term -> Located Term -> Term)
+  -> (Term -> Term -> Bool)
+  -> Located Term
+  -> Located Term
+  -> Result (Located Term) (Located Term)
+commonEvalEqualityHelper f ctx tm tmName op left right =
+  if isValue left && isValue right then
+    Ok <| withLocation tm <| TmBool <| op left.value right.value
+  else if isValue left then
+    f ctx right |>
+    Result.map
+    (\newRight ->
+      withLocation tm <| tmName left newRight
+    )
+  else
+    f ctx left |>
+    Result.map
+    (\newLeft ->
+      withLocation tm <| tmName newLeft right
+    )
+
+
+commonEvalComparisonIntsHelper :
+  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  -> Ctx
+  -> Located Term
+  -> (Located Term -> Located Term -> Term)
+  -> (Int -> Int -> Bool)
+  -> Located Term
+  -> Located Term
+  -> Result (Located Term) (Located Term)
+commonEvalComparisonIntsHelper f ctx tm tmName op left right =
+  case left.value of
+    TmInt leftValue ->
+      case right.value of
+        TmInt rightValue ->
+          Ok <| withLocation tm <| TmBool <| op leftValue rightValue
+        
+        _ ->
+          f ctx right |>
+          Result.map
+          (\newRight ->
+            withLocation tm <| tmName left newRight
+          )
+
+    _ ->
+      f ctx left |>
+      Result.map
+      (\newLeft ->
+        withLocation tm <| tmName newLeft right
+      )
 
 
 commonEvalBinaryIntsHelper :
@@ -564,6 +657,9 @@ termShift d c t =
     TmDivision left right ->
       termShiftBinaryHelper d c TmDivision left right
 
+    TmComparison comp left right ->
+      termShiftBinaryHelper d c (TmComparison comp) left right
+
     TmBool _ ->
       t.value
 
@@ -613,6 +709,9 @@ termSubst j s t =
     
     TmDivision left right ->
       termSubstBinaryHelper j s TmDivision left right
+
+    TmComparison comp left right ->
+      termSubstBinaryHelper j s (TmComparison comp) left right
 
     TmBool _ ->
       t.value

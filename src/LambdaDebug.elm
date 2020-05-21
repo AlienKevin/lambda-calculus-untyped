@@ -11,15 +11,21 @@ source =
   -- "v = (\\x:Bool->Bool. x) (\\x:Bool. false) true"
   -- "id = if (\\x:Bool->Bool. x) (\\x:Bool. false) true then \\x:(Bool-> Bool) -> Bool. x else \\y:(Bool->Bool)->Bool. y"
   """v = (id true)
-v2 = succ 0
-v3 = pred 0
+v2 = negate (succ 0)
+v3 = negate (pred 0)
 v4 = half (double 29302)
+-- v5 = \\x:Bool. (\\x:Bool. not (not false)) == (\\y:Bool. id (id (id true)))
+v6 = 3 >= 4
 id = \\x:Bool. x
 succ = \\a:Int. a + 1
 pred = \\a:Int. a - 1
 double = \\a:Int. a * 2
 half = \\a:Int. a / 2
+negate = \\a:Int. 2 + -2
+eq = \\a:Int. \\b:Int. a + 2 != b - 2
+not = \\a:Bool. if a then false else true
 """
+  -- "negate = \\a:Int. --2"
 
 main =
   let
@@ -45,7 +51,7 @@ main =
               -- Html.text "✔ Passsed check!"
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByValue defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

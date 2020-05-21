@@ -1,4 +1,4 @@
-module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, fakeDef, Def, Expr(..), Type(..))
+module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, fakeDef, Def, Expr(..), Type(..), Comparison(..))
 
 
 import Parser.Advanced exposing (..)
@@ -32,6 +32,7 @@ type Problem
   | ExpectingMinus
   | ExpectingAsterisk
   | ExpectingSlash
+  | ExpectingComparison Comparison
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
   | ExpectingEndOfMultiLineComment
@@ -64,7 +65,17 @@ type Expr
   | ESubtract (Located Expr) (Located Expr)
   | EMultiplication (Located Expr) (Located Expr)
   | EDivision (Located Expr) (Located Expr)
+  | EComparison Comparison (Located Expr) (Located Expr)
   | EIf (Located Expr) (Located Expr) (Located Expr) 
+
+
+type Comparison
+  = CompEQ
+  | CompNE
+  | CompLT
+  | CompLE
+  | CompGT
+  | CompGE
 
 
 type Type
@@ -196,13 +207,25 @@ internalParseExpr =
       , subexpr parseInt
       ]
     , andThenOneOf =
-      [ Pratt.infixLeft 1 (symbol <| Token "+" ExpectingPlus)
+      [ Pratt.infixLeft 4 (symbol <| Token "==" <| ExpectingComparison CompEQ)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompEQ leftExpr rightExpr })
+      , Pratt.infixLeft 4 (symbol <| Token "!=" <| ExpectingComparison CompNE)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompNE leftExpr rightExpr })
+      , Pratt.infixLeft 4 (symbol <| Token "<=" <| ExpectingComparison CompLE)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompLE leftExpr rightExpr })
+      , Pratt.infixLeft 4 (symbol <| Token ">=" <| ExpectingComparison CompGE)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompGE leftExpr rightExpr })
+      , Pratt.infixLeft 4 (symbol <| Token "<" <| ExpectingComparison CompLT)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompLT leftExpr rightExpr })
+      , Pratt.infixLeft 4 (symbol <| Token ">" <| ExpectingComparison CompGT)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EComparison CompGT leftExpr rightExpr })
+      , Pratt.infixLeft 6 (symbol <| Token "+" ExpectingPlus)
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EAdd leftExpr rightExpr })
-      , Pratt.infixLeft 1 (symbol <| Token "-" ExpectingMinus)
+      , Pratt.infixLeft 6 (symbol <| Token "-" ExpectingMinus)
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = ESubtract leftExpr rightExpr })
-      , Pratt.infixLeft 2 (symbol <| Token "*" ExpectingAsterisk)
+      , Pratt.infixLeft 7 (symbol <| Token "*" ExpectingAsterisk)
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EMultiplication leftExpr rightExpr })
-      , Pratt.infixLeft 2 (symbol <| Token "/" ExpectingSlash)
+      , Pratt.infixLeft 7 (symbol <| Token "/" ExpectingSlash)
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EDivision leftExpr rightExpr })
       ]
     , spaces = sps
@@ -574,7 +597,10 @@ showProblem p =
 
     ExpectingSlash ->
       "a '/'"
-    
+
+    ExpectingComparison comp ->
+      "a '" ++ showComparison comp ++ "'"
+
     ExpectingStartOfLineComment ->
       "the start of a single-line comment '--'"
     
@@ -721,11 +747,36 @@ showExpr expr =
 
     EDivision left right ->
       "(" ++ showExpr left.value ++ " / " ++ showExpr right.value ++ ")"
+
+    EComparison comp left right ->
+      "(" ++ showExpr left.value ++ " " ++ showComparison comp ++ " " ++ showExpr right.value ++ ")"
     
     EIf condition thenBranch elseBranch ->
       "if " ++ showExpr condition.value
       ++ " then " ++ showExpr thenBranch.value
       ++ " else " ++ showExpr elseBranch.value
+
+
+showComparison : Comparison -> String
+showComparison comp =
+  case comp of
+    CompEQ ->
+      "=="
+    
+    CompNE ->
+      "!="
+    
+    CompLT ->
+      "<"
+    
+    CompLE ->
+      "<="
+    
+    CompGT ->
+      ">"
+    
+    CompGE ->
+      ">="
 
 
 showType : Type -> String

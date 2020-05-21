@@ -32,6 +32,7 @@ type Problem
   | ExpectingMinus
   | ExpectingAsterisk
   | ExpectingSlash
+  | ExpectingComma
   | ExpectingComparison Comparison
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
@@ -61,6 +62,7 @@ type Expr
   | EApplication (Located Expr) (Located Expr)
   | EBool Bool
   | EInt Int
+  | EPair (Located Expr) (Located Expr)
   | EAdd (Located Expr) (Located Expr)
   | ESubtract (Located Expr) (Located Expr)
   | EMultiplication (Located Expr) (Located Expr)
@@ -81,6 +83,7 @@ type Comparison
 type Type
   = TyBool
   | TyInt
+  | TyPair (Located Type) (Located Type)
   | TyFunc (Located Type) (Located Type)
 
 
@@ -281,7 +284,7 @@ parseApplicationHelper =
   ( succeed identity
     |= oneOf
       [ parseAbstraction
-      , parseGroup
+      , parseGroupOrPair
       , parseIf
       , parseBool
       , parseInt
@@ -297,7 +300,7 @@ parseApplicationHelper =
               |. backtrackable sps
               |= ( checkIndent <| oneOf
                 [ parseAbstraction
-                , parseGroup
+                , parseGroupOrPair
                 , parseIf
                 , parseBool
                 , parseInt
@@ -333,14 +336,29 @@ parseInt =
     )
 
 
-parseGroup : LambdaParser (Located Expr)
-parseGroup =
+parseGroupOrPair : LambdaParser (Located Expr)
+parseGroupOrPair =
   located <|
-  succeed identity
+  succeed
+    (\e1 maybeE2 ->
+      case maybeE2 of
+        Just e2 ->
+          EPair e1 e2
+        
+        Nothing ->
+          e1.value
+    )
     |. symbol (Token "(" ExpectingLeftParen)
     |. sps
-    |= lazy (\_ -> map .value internalParseExpr)
+    |= lazy (\_ -> internalParseExpr)
     |. sps
+    |= ( optional <|
+      succeed identity
+      |. symbol (Token "," ExpectingComma)
+      |. sps
+      |= lazy (\_ -> internalParseExpr)
+      |. sps
+    )
     |. symbol (Token ")" ExpectingRightParen)
 
 
@@ -412,7 +430,7 @@ parseType =
     )
     |= oneOf
       [ parseBaseType
-      , parseGroupType
+      , parseGroupOrPairType
       ]
     |= (optional <|
       succeed identity
@@ -432,12 +450,29 @@ parseBaseType =
     ]
 
 
-parseGroupType : LambdaParser (Located Type)
-parseGroupType =
+parseGroupOrPairType : LambdaParser (Located Type)
+parseGroupOrPairType =
   located <|
-  succeed identity
+  succeed
+  (\ty1 maybeTy2 ->
+    case maybeTy2 of
+      Just ty2 ->
+        TyPair ty1 ty2
+      
+      Nothing ->
+        ty1.value
+  )
     |. symbol (Token "(" ExpectingLeftParen)
-    |= lazy (\_ -> map .value parseType)
+    |. sps
+    |= lazy (\_ -> parseType)
+    |. sps
+    |= ( optional <|
+      succeed identity
+      |. symbol (Token "," ExpectingComma)
+      |. sps
+      |= lazy (\_ -> parseType)
+      |. sps
+    )
     |. symbol (Token ")" ExpectingRightParen)
 
 
@@ -598,6 +633,9 @@ showProblem p =
     ExpectingSlash ->
       "a '/'"
 
+    ExpectingComma ->
+      "a ','"
+
     ExpectingComparison comp ->
       "a '" ++ showComparison comp ++ "'"
 
@@ -736,6 +774,9 @@ showExpr expr =
     EInt int ->
       String.fromInt int
 
+    EPair e1 e2 ->
+      "(" ++ showExpr e1.value ++ ", " ++ showExpr e2.value ++ ")"
+
     EAdd left right ->
       "(" ++ showExpr left.value ++ " + " ++ showExpr right.value ++ ")"
 
@@ -787,6 +828,9 @@ showType t =
 
     TyInt ->
       "Int"
+
+    TyPair t1 t2 ->
+      "(" ++ showType t1.value ++ ", " ++ showType t2.value ++ ")"
 
     TyFunc t1 t2 ->
       ( case t1.value of

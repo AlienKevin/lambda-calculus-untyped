@@ -114,6 +114,9 @@ checkExpr names expr =
     EInt _ ->
       []
 
+    EPair e1 e2 ->
+      checkExprBinaryHelper names e1 e2
+
     EAdd left right ->
       checkExprBinaryHelper names left right
 
@@ -209,6 +212,17 @@ getType ctx expr =
             Err <| ExpectingTyBool conditionType 
       )
 
+    EPair e1 e2 ->
+      getType ctx e1 |>
+      Result.andThen
+      (\ty1 ->
+        getType ctx e2 |>
+        Result.andThen
+        (\ty2 ->
+          Ok <| withLocation expr <| TyPair ty1 ty2
+        )
+      )
+
     EAdd left right ->
       getTypeFromBinaryInts ctx expr left right
 
@@ -290,6 +304,10 @@ areEqualTypes ty1 ty2 =
 
     (TyInt, TyInt) ->
       True
+
+    (TyPair p1ty1 p1ty2, TyPair p2ty1 p2ty2) ->
+      areEqualTypes p1ty1.value p2ty1.value
+      && areEqualTypes p1ty2.value p2ty2.value
     
     (TyFunc fromType1 toType1, TyFunc fromType2 toType2) ->
       areEqualTypes fromType1.value fromType2.value
@@ -505,6 +523,9 @@ getFreeVariablesHelper boundVariables expr =
     EInt _ ->
       []
 
+    EPair e1 e2 ->
+      getFreeVariablesBinaryHelper boundVariables e1 e2
+
     EAdd left right ->
       getFreeVariablesBinaryHelper boundVariables left right
 
@@ -530,7 +551,6 @@ getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> Lis
 getFreeVariablesBinaryHelper boundVariables left right =
   getFreeVariablesHelper boundVariables left.value
   ++ getFreeVariablesHelper boundVariables right.value
-
 
 
 type alias Dependencies =

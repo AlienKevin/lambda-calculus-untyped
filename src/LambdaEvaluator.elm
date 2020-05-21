@@ -72,6 +72,7 @@ type Term
   | TmApplication (Located Term) (Located Term)
   | TmBool Bool
   | TmInt Int
+  | TmPair (Located Term) (Located Term)
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
   | TmSubtract (Located Term) (Located Term)
@@ -125,6 +126,9 @@ termToExpr names t =
       (termToExpr names thenBranch)
       (termToExpr names elseBranch)
 
+    TmPair t1 t2 ->
+      termToExprBinaryHelper names EPair t1 t2
+
     TmAdd left right ->
       termToExprBinaryHelper names EAdd left right
 
@@ -173,6 +177,9 @@ termToExprDebug names t =
       (termToExprDebug names condition)
       (termToExprDebug names thenBranch)
       (termToExprDebug names elseBranch)
+
+    TmPair t1 t2 ->
+      termToExprDebugBinaryHelper names EPair t1 t2
 
     TmAdd left right ->
       termToExprDebugBinaryHelper names EAdd left right
@@ -253,6 +260,9 @@ exprToTerm ctx expr =
       (exprToTerm ctx condition)
       (exprToTerm ctx thenBranch)
       (exprToTerm ctx elseBranch)
+
+    EPair e1 e2 ->
+      exprToTermBinaryHelper ctx TmPair e1 e2
 
     EAdd left right ->
       exprToTermBinaryHelper ctx TmAdd left right
@@ -421,8 +431,8 @@ evalTermFullHelper ctx t =
 
 
 commonEval : (Ctx -> Located Term -> Result (Located Term) (Located Term)) -> Ctx -> Located Term -> Result (Located Term) (Located Term)
-commonEval f ctx t =
-  case t.value of
+commonEval f ctx tm =
+  case tm.value of
     TmIf condition thenBranch elseBranch ->
       case condition.value of
         TmBool bool ->
@@ -435,28 +445,28 @@ commonEval f ctx t =
           f ctx condition |>
           Result.map
           (\newCondition ->
-            withLocation t <| TmIf newCondition thenBranch elseBranch
+            withLocation tm <| TmIf newCondition thenBranch elseBranch
           )
 
     TmAdd left right ->
-      commonEvalBinaryIntsHelper f ctx t TmAdd (+) left right
+      commonEvalBinaryIntsHelper f ctx tm TmAdd (+) left right
     
     TmSubtract left right ->
-      commonEvalBinaryIntsHelper f ctx t TmSubtract (-) left right
+      commonEvalBinaryIntsHelper f ctx tm TmSubtract (-) left right
 
     TmMultiplication left right ->
-      commonEvalBinaryIntsHelper f ctx t TmMultiplication (*) left right
+      commonEvalBinaryIntsHelper f ctx tm TmMultiplication (*) left right
 
     TmDivision left right ->
-      commonEvalBinaryIntsHelper f ctx t TmDivision (//) left right
+      commonEvalBinaryIntsHelper f ctx tm TmDivision (//) left right
     
     TmComparison comp left right ->
       case comp of
         CompEQ ->
-          commonEvalEqualityHelper f ctx t (TmComparison comp) (==) left right
+          commonEvalEqualityHelper f ctx tm (TmComparison comp) (==) left right
         
         CompNE ->
-          commonEvalEqualityHelper f ctx t (TmComparison comp) (/=) left right
+          commonEvalEqualityHelper f ctx tm (TmComparison comp) (/=) left right
 
         _ ->
           let
@@ -474,10 +484,26 @@ commonEval f ctx t =
                 _ ->
                   (>=)
           in
-          commonEvalComparisonIntsHelper f ctx t (TmComparison comp) compFunc left right
+          commonEvalComparisonIntsHelper f ctx tm (TmComparison comp) compFunc left right
+
+    TmPair tm1 tm2 ->
+      if isValue tm1 && isValue tm2 then
+        Ok tm
+      else if isValue tm1 then
+        f ctx tm2 |>
+        Result.map
+        (\newTm2 ->
+          withLocation tm <| TmPair tm1 newTm2
+        )
+      else
+        f ctx tm1 |>
+        Result.map
+        (\newTm1 ->
+          withLocation tm <| TmPair newTm1 tm2
+        )
 
     _ ->
-      Err t
+      Err tm
 
 
 commonEvalEqualityHelper :
@@ -645,6 +671,9 @@ termShift d c t =
       (termShift d c thenBranch)
       (termShift d c elseBranch)
 
+    TmPair t1 t2 ->
+      termShiftBinaryHelper d c TmPair t1 t2
+
     TmAdd left right ->
       termShiftBinaryHelper d c TmAdd left right
 
@@ -712,6 +741,9 @@ termSubst j s t =
 
     TmComparison comp left right ->
       termSubstBinaryHelper j s (TmComparison comp) left right
+
+    TmPair t1 t2 ->
+      termSubstBinaryHelper j s TmPair t1 t2
 
     TmBool _ ->
       t.value

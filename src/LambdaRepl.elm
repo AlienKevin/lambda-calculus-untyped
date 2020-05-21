@@ -1232,7 +1232,7 @@ scale : Orientation -> Int -> Int
 scale  orientation value =
   case orientation of
     Portrait ->
-      round <| toFloat value * 1.25
+      round <| toFloat value
     
     Landscape ->
       value

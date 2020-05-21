@@ -114,21 +114,27 @@ checkExpr names expr =
       []
 
     EAdd left right ->
-      checkExpr names left
-      ++ checkExpr names right
+      checkExprBinaryHelper names left right
 
     ESubtract left right ->
-      checkExpr names left
-      ++ checkExpr names right
+      checkExprBinaryHelper names left right
 
     EMultiplication left right ->
-      checkExpr names left
-      ++ checkExpr names right
+      checkExprBinaryHelper names left right
+
+    EDivision left right ->
+      checkExprBinaryHelper names left right
     
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
       ++ checkExpr names thenBranch
       ++ checkExpr names elseBranch
+
+
+checkExprBinaryHelper : Dict String (Located String) -> Located Expr -> Located Expr -> List Problem
+checkExprBinaryHelper names left right =
+  checkExpr names left
+  ++ checkExpr names right
 
 
 type alias Ctx
@@ -206,6 +212,9 @@ getType ctx expr =
       getTypeFromBinaryInts ctx expr left right
 
     EMultiplication left right ->
+      getTypeFromBinaryInts ctx expr left right
+
+    EDivision left right ->
       getTypeFromBinaryInts ctx expr left right
 
     EBool _ ->
@@ -457,6 +466,9 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesBinaryHelper boundVariables left right
 
     EMultiplication left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    EDivision left right ->
       getFreeVariablesBinaryHelper boundVariables left right
 
     EIf condition thenBranch elseBranch ->

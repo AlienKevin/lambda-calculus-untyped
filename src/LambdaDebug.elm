@@ -10,9 +10,16 @@ import LambdaEvaluator
 source =
   -- "v = (\\x:Bool->Bool. x) (\\x:Bool. false) true"
   -- "id = if (\\x:Bool->Bool. x) (\\x:Bool. false) true then \\x:(Bool-> Bool) -> Bool. x else \\y:(Bool->Bool)->Bool. y"
-  """v = id (id (id true))
+  """v = (id true)
+v2 = succ 0
+v3 = pred 0
+v4 = half (double 29302)
 id = \\x:Bool. x
-  """
+succ = \\a:Int. a + 1
+pred = \\a:Int. a - 1
+double = \\a:Int. a * 2
+half = \\a:Int. a / 2
+"""
 
 main =
   let
@@ -38,7 +45,7 @@ main =
               -- Html.text "✔ Passsed check!"
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByValue defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

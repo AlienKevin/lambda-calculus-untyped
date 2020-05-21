@@ -46,6 +46,7 @@ type alias Model =
   , toolTip : ToolTip
   , colors : Colors
   , theme : Theme
+  , useLigatures: Bool
   }
 
 
@@ -62,6 +63,7 @@ type Msg
   | SetToolTip ToolTip
   | CloseActiveCell
   | SetTheme Theme
+  | SetUseLigatures Bool
   | NoOp
 
 
@@ -158,6 +160,8 @@ init savedModelStr =
         getThemeColors Light
       , theme =
         Light
+      , useLigatures =
+        True
       }
     
     initialModel =
@@ -185,6 +189,8 @@ view model =
       [ Font.typeface "Fira Code"
       , Font.monospace
       ]
+    , E.htmlAttribute <| Html.Attributes.style "font-variant-ligatures" <|
+      if model.useLigatures then "normal" else "none"
     , E.inFront <| viewToolButtons model
     , E.inFront <| viewPopUp model
     , Font.size <| scale model.orientation 16
@@ -266,6 +272,19 @@ viewSettingsPopUp model =
         [ Input.option Light (E.text "Light")
         , Input.option SolarizedLight (E.text "Solarized Light")
         , Input.option Dark (E.text "Dark")
+        ]
+    }
+  , E.el styles.subtitle <| E.text "Ligatures"
+  , Input.radioRow
+    [ E.padding 10
+    , E.spacing 20
+    ]
+    { onChange = SetUseLigatures
+    , selected = Just model.useLigatures
+    , label = Input.labelHidden "Ligatures"
+    , options =
+        [ Input.option True (E.text "On")
+        , Input.option False (E.text "Off")
         ]
     }
   ]
@@ -561,6 +580,7 @@ viewCell activeCellIndex currentCellIndex (src, result) model =
             , E.htmlAttribute <| Html.Attributes.id <| getCellId currentCellIndex
             , E.onRight <| viewRemoveActiveCellButton
             , Background.color model.colors.lightBg
+            , E.htmlAttribute <| Html.Attributes.style "font-variant-ligatures" "inherit"
             ]
             { onChange =
               EditCell
@@ -651,8 +671,21 @@ update msg model =
     SetTheme theme ->
       setTheme theme model
 
+    SetUseLigatures useLigatures ->
+      setUseLigatures useLigatures model
+
     NoOp ->
       (model, Cmd.none)
+
+
+setUseLigatures : Bool -> Model -> (Model, Cmd Msg)
+setUseLigatures useLigatures model =
+  ( { model
+      | useLigatures =
+        useLigatures
+    }
+  , Cmd.none
+  )
 
 
 setTheme : Theme -> Model -> (Model, Cmd Msg)
@@ -1117,6 +1150,7 @@ decodeModel =
   Field.require "activeCellIndex" Decode.int <| \activeCellIndex ->
   Field.require "evalStrategy" decodeEvalStrategy <| \evalStrategy ->
   Field.require "theme" decodeTheme <| \theme ->
+  Field.require "useLigatures" Decode.bool <| \useLigatures ->
 
   Decode.succeed <|
     evalAllCells
@@ -1143,6 +1177,8 @@ decodeModel =
       getThemeColors theme
     , theme =
       theme
+    , useLigatures =
+      useLigatures
     }
 
 
@@ -1199,6 +1235,7 @@ encodeModel model =
     , ( "activeCellIndex", Encode.int model.activeCellIndex )
     , ( "evalStrategy", encodeEvalStrategy model.evalStrategy )
     , ( "theme", encodeTheme model.theme )
+    , ( "useLigatures", Encode.bool model.useLigatures )
     ]
 
 

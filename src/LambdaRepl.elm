@@ -182,7 +182,8 @@ view : Model -> Html Msg
 view model =
   E.layout
   ( [ Font.family
-      [ Font.monospace
+      [ Font.typeface "Fira Code"
+      , Font.monospace
       ]
     , E.inFront <| viewToolButtons model
     , E.inFront <| viewPopUp model
@@ -511,6 +512,7 @@ viewCell activeCellIndex currentCellIndex (src, result) model =
             [ Html.Attributes.style "white-space" "pre-wrap"
             , Html.Attributes.style "margin" "0"
             , Html.Attributes.style "color" "tomato"
+            , Html.Attributes.style "font-family" "inherit"
             ]
             [ Html.text msg
             ]

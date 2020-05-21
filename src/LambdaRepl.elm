@@ -1023,12 +1023,20 @@ evalAllCells model =
             Ok def ->
               case List.Extra.elemIndex def sortedDefs of
                 Just sortedIndex ->
-                  Array.set sortedIndex (index, source) sources
+                  case Array.get sortedIndex sources of
+                    Just s ->
+                      if s == (-1, "") then
+                        Array.set sortedIndex (index, source) sources
+                      else
+                        Array.push (index, source) sources
+                    
+                    Nothing -> -- impossible
+                      Array.push (index, source) sources
                 
                 Nothing -> -- impossible
                   Array.push (index, source) sources
         )
-        (Array.repeat (List.length sortedDefs) (0, ""))
+        (Array.repeat (List.length sortedDefs) (-1, ""))
         unevaluatedCells
     
     srcs =

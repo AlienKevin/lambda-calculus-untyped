@@ -500,11 +500,13 @@ viewCell activeCellIndex currentCellIndex (src, result) model =
       ] <|
       case result of
         Ok def ->
-          E.text <|
+          E.paragraph []
+          [ E.text <|
             if String.startsWith "$" def.name.value then
               LambdaParser.showExpr def.expr.value
             else
               LambdaParser.showDef def
+          ]
         
         Err msg ->
           E.html <|

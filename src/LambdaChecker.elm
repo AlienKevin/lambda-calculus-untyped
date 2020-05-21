@@ -120,6 +120,10 @@ checkExpr names expr =
     ESubtract left right ->
       checkExpr names left
       ++ checkExpr names right
+
+    EMultiplication left right ->
+      checkExpr names left
+      ++ checkExpr names right
     
     EIf condition thenBranch elseBranch ->
       checkExpr names condition
@@ -199,6 +203,9 @@ getType ctx expr =
       getTypeFromBinaryInts ctx expr left right
 
     ESubtract left right ->
+      getTypeFromBinaryInts ctx expr left right
+
+    EMultiplication left right ->
       getTypeFromBinaryInts ctx expr left right
 
     EBool _ ->
@@ -447,6 +454,9 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesBinaryHelper boundVariables left right
 
     ESubtract left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    EMultiplication left right ->
       getFreeVariablesBinaryHelper boundVariables left right
 
     EIf condition thenBranch elseBranch ->

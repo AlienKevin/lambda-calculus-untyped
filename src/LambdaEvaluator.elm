@@ -75,6 +75,7 @@ type Term
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
   | TmSubtract (Located Term) (Located Term)
+  | TmMultiplication (Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -127,6 +128,9 @@ termToExpr names t =
 
     TmSubtract left right ->
       termToExprBinaryHelper names ESubtract left right
+
+    TmMultiplication left right ->
+      termToExprBinaryHelper names EMultiplication left right
     
     TmBool bool ->
       EBool bool
@@ -167,6 +171,9 @@ termToExprDebug names t =
       
     TmSubtract left right ->
       termToExprDebugBinaryHelper names ESubtract left right
+    
+    TmMultiplication left right ->
+      termToExprDebugBinaryHelper names EMultiplication left right
     
     TmBool bool ->
       EBool bool
@@ -238,6 +245,9 @@ exprToTerm ctx expr =
 
     ESubtract left right ->
       exprToTermBinaryHelper ctx TmSubtract left right
+
+    EMultiplication left right ->
+      exprToTermBinaryHelper ctx TmMultiplication left right
 
     EBool bool ->
       TmBool bool
@@ -414,6 +424,9 @@ commonEval f ctx t =
     TmSubtract left right ->
       commonEvalBinaryIntsHelper f ctx t TmSubtract (-) left right
 
+    TmMultiplication left right ->
+      commonEvalBinaryIntsHelper f ctx t TmMultiplication (*) left right
+
     _ ->
       Err t
 
@@ -532,6 +545,9 @@ termShift d c t =
     TmSubtract left right ->
       termShiftBinaryHelper d c TmSubtract left right
 
+    TmMultiplication left right ->
+      termShiftBinaryHelper d c TmMultiplication left right
+
     TmBool _ ->
       t.value
 
@@ -575,6 +591,9 @@ termSubst j s t =
 
     TmSubtract left right ->
       termSubstBinaryHelper j s TmSubtract left right
+
+    TmMultiplication left right ->
+      termSubstBinaryHelper j s TmMultiplication left right
 
     TmBool _ ->
       t.value

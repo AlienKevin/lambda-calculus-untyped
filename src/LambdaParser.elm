@@ -30,6 +30,7 @@ type Problem
   | ExpectingArrow
   | ExpectingPlus
   | ExpectingMinus
+  | ExpectingAsterisk
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
   | ExpectingEndOfMultiLineComment
@@ -60,6 +61,7 @@ type Expr
   | EInt Int
   | EAdd (Located Expr) (Located Expr)
   | ESubtract (Located Expr) (Located Expr)
+  | EMultiplication (Located Expr) (Located Expr)
   | EIf (Located Expr) (Located Expr) (Located Expr) 
 
 
@@ -196,6 +198,8 @@ internalParseExpr =
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EAdd leftExpr rightExpr })
       , Pratt.infixLeft 1 (symbol <| Token "-" ExpectingMinus)
         (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = ESubtract leftExpr rightExpr })
+      , Pratt.infixLeft 2 (symbol <| Token "*" ExpectingAsterisk)
+        (\leftExpr rightExpr -> { from = leftExpr.from, to = rightExpr.to, value = EMultiplication leftExpr rightExpr })
       ]
     , spaces = sps
     }
@@ -549,6 +553,9 @@ showProblem p =
 
     ExpectingMinus ->
       "a '-'"
+
+    ExpectingAsterisk ->
+      "a '*'"
     
     ExpectingStartOfLineComment ->
       "the start of a single-line comment '--'"
@@ -690,6 +697,9 @@ showExpr expr =
 
     ESubtract left right ->
       "(" ++ showExpr left.value ++ " - " ++ showExpr right.value ++ ")"
+
+    EMultiplication left right ->
+      "(" ++ showExpr left.value ++ " * " ++ showExpr right.value ++ ")"
       
     EIf condition thenBranch elseBranch ->
       "if " ++ showExpr condition.value

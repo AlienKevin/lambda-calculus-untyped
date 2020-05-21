@@ -295,8 +295,19 @@ parseInt : LambdaParser (Located Expr)
 parseInt =
   located <|
   map EInt <|
-  backtrackable <|
-  int ExpectingInt ExpectingInt
+  succeed
+  (\sign value ->
+    case sign of
+      Just _ ->
+        negate value
+      
+      Nothing ->
+        value
+  )
+  |= optional (symbol <| Token "-" ExpectingMinus)
+  |= ( backtrackable <|
+    int ExpectingInt ExpectingInt
+    )
 
 
 parseGroup : LambdaParser (Located Expr)

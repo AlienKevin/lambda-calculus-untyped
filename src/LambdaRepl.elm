@@ -47,6 +47,7 @@ type alias Model =
   , colors : Colors
   , theme : Theme
   , useLigatures: Bool
+  , fontSize : Int
   }
 
 
@@ -64,6 +65,7 @@ type Msg
   | CloseActiveCell
   | SetTheme Theme
   | SetUseLigatures Bool
+  | SetFontSize Int
   | NoOp
 
 
@@ -162,6 +164,8 @@ init savedModelStr =
         Light
       , useLigatures =
         True
+      , fontSize =
+        16
       }
     
     initialModel =
@@ -193,7 +197,7 @@ view model =
       if model.useLigatures then "normal" else "none"
     , E.inFront <| viewToolButtons model
     , E.inFront <| viewPopUp model
-    , Font.size <| scale model.orientation 16
+    , Font.size <| scale model.orientation model.fontSize
     , Font.color model.colors.darkFg
     , Background.color model.colors.lightBg
     ] ++ case model.orientation of
@@ -286,6 +290,31 @@ viewSettingsPopUp model =
         [ Input.option True (E.text "On")
         , Input.option False (E.text "Off")
         ]
+    }
+  , E.el styles.subtitle <| E.text "Font Size"
+  , Input.slider
+    [ E.height (E.px 20)
+    , E.behindContent
+        (E.el
+            [ E.width E.fill
+            , E.height (E.px 2)
+            , E.centerY
+            , Background.color model.colors.lightBg
+            , Border.rounded 2
+            ]
+            E.none
+        )
+    ]
+    { onChange = round >> SetFontSize
+    , label =
+      Input.labelRight []
+        (E.text <| String.fromInt model.fontSize ++ "px")
+    , min = 10
+    , max = 20
+    , step = Just 1
+    , value = toFloat <| model.fontSize
+    , thumb =
+        Input.defaultThumb
     }
   ]
 
@@ -674,8 +703,21 @@ update msg model =
     SetUseLigatures useLigatures ->
       setUseLigatures useLigatures model
 
+    SetFontSize size ->
+      setFontSize size model
+
     NoOp ->
       (model, Cmd.none)
+
+
+setFontSize : Int -> Model -> (Model, Cmd Msg)
+setFontSize size model =
+  ( { model
+      | fontSize =
+        size
+    }
+  , Cmd.none
+  )
 
 
 setUseLigatures : Bool -> Model -> (Model, Cmd Msg)
@@ -1151,6 +1193,7 @@ decodeModel =
   Field.require "evalStrategy" decodeEvalStrategy <| \evalStrategy ->
   Field.require "theme" decodeTheme <| \theme ->
   Field.require "useLigatures" Decode.bool <| \useLigatures ->
+  Field.require "fontSize" Decode.int <| \fontSize ->
 
   Decode.succeed <|
     evalAllCells
@@ -1179,6 +1222,8 @@ decodeModel =
       theme
     , useLigatures =
       useLigatures
+    , fontSize =
+      fontSize
     }
 
 
@@ -1224,18 +1269,13 @@ decodeEvalStrategy =
 
 encodeModel : Model -> Encode.Value
 encodeModel model =
-  --  { cells : Dict Int Cell
-  -- , activeCellIndex : Int
-  -- , evalStrategy : EvalStrategy
-  -- , orientation : Orientation
-  -- , popUp : PopUp
-  -- }
   Encode.object
     [ ( "cells", Encode.list Encode.string <| List.map Tuple.first <| Dict.values model.cells )
     , ( "activeCellIndex", Encode.int model.activeCellIndex )
     , ( "evalStrategy", encodeEvalStrategy model.evalStrategy )
     , ( "theme", encodeTheme model.theme )
     , ( "useLigatures", Encode.bool model.useLigatures )
+    , ( "fontSize", Encode.int model.fontSize )
     ]
 
 

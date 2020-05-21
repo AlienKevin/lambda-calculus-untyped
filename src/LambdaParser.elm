@@ -1,4 +1,4 @@
-module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, fakeDef, Def, Expr(..), Type(..), Comparison(..))
+module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, fakeDef, Def, Expr(..), Type(..), Comparison(..), PairIndex(..))
 
 
 import Parser.Advanced exposing (..)
@@ -33,6 +33,8 @@ type Problem
   | ExpectingAsterisk
   | ExpectingSlash
   | ExpectingComma
+  | ExpectingOne
+  | ExpectingTwo
   | ExpectingComparison Comparison
   | ExpectingStartOfLineComment
   | ExpectingStartOfMultiLineComment
@@ -63,12 +65,18 @@ type Expr
   | EBool Bool
   | EInt Int
   | EPair (Located Expr) (Located Expr)
+  | EPairAccess (Located Expr) (Located PairIndex)
   | EAdd (Located Expr) (Located Expr)
   | ESubtract (Located Expr) (Located Expr)
   | EMultiplication (Located Expr) (Located Expr)
   | EDivision (Located Expr) (Located Expr)
   | EComparison Comparison (Located Expr) (Located Expr)
   | EIf (Located Expr) (Located Expr) (Located Expr) 
+
+
+type PairIndex
+  = PairIndexOne
+  | PairIndexTwo
 
 
 type Comparison
@@ -282,14 +290,7 @@ parseApplicationHelper : LambdaParser (List (Located Expr))
 parseApplicationHelper =
   checkIndent <|
   ( succeed identity
-    |= oneOf
-      [ parseAbstraction
-      , parseGroupOrPair
-      , parseIf
-      , parseBool
-      , parseInt
-      , parseVariable
-      ]
+    |= parseComponent
     |> andThen
     (\e1 ->
       succeed (\es -> e1 :: es)
@@ -298,15 +299,7 @@ parseApplicationHelper =
           oneOf
             [ succeed (\expr -> Loop <| expr :: revExprs)
               |. backtrackable sps
-              |= ( checkIndent <| oneOf
-                [ parseAbstraction
-                , parseGroupOrPair
-                , parseIf
-                , parseBool
-                , parseInt
-                , parseVariable
-                ]
-              )
+              |= checkIndent parseComponent
             , succeed () |>
               map (\_ ->
                 Done (List.reverse revExprs)
@@ -315,6 +308,48 @@ parseApplicationHelper =
         )
     )
   )
+
+
+parseComponent : LambdaParser (Located Expr)
+parseComponent =
+  located <|
+  succeed
+  (\expr pairIndices ->
+    case pairIndices of
+      [] ->
+        expr.value
+      
+      _ ->
+        .value <|
+        List.foldl
+          (\index e ->
+            withLocation e <| EPairAccess e index
+          )
+          expr
+          pairIndices
+  )
+  |= oneOf
+    [ parseAbstraction
+    , parseGroupOrPair
+    , parseIf
+    , parseBool
+    , parseInt
+    , parseVariable
+    ]
+  |= loop []
+    (\revIndices ->
+      oneOf
+      [ succeed (\index -> Loop <| index :: revIndices)
+        |. symbol (Token "." ExpectingDot)
+        |= ( located <| oneOf
+          [ map (\_ -> PairIndexOne) <| symbol (Token "1" ExpectingOne)
+          , map (\_ -> PairIndexTwo) <| symbol (Token "2" ExpectingTwo)
+          ]
+        )
+      , succeed ()
+        |> map (\_ -> Done <| List.reverse revIndices)
+      ]
+    )
 
 
 parseInt : LambdaParser (Located Expr)
@@ -636,6 +671,12 @@ showProblem p =
     ExpectingComma ->
       "a ','"
 
+    ExpectingOne ->
+      "a '1'"
+    
+    ExpectingTwo ->
+      "a '2'"
+
     ExpectingComparison comp ->
       "a '" ++ showComparison comp ++ "'"
 
@@ -777,6 +818,9 @@ showExpr expr =
     EPair e1 e2 ->
       "(" ++ showExpr e1.value ++ ", " ++ showExpr e2.value ++ ")"
 
+    EPairAccess pair index ->
+      showExpr pair.value ++ "." ++ showPairIndex index.value
+
     EAdd left right ->
       "(" ++ showExpr left.value ++ " + " ++ showExpr right.value ++ ")"
 
@@ -796,6 +840,16 @@ showExpr expr =
       "if " ++ showExpr condition.value
       ++ " then " ++ showExpr thenBranch.value
       ++ " else " ++ showExpr elseBranch.value
+
+
+showPairIndex : PairIndex -> String
+showPairIndex index =
+  case index of
+    PairIndexOne ->
+      "1"
+    
+    PairIndexTwo ->
+      "2"
 
 
 showComparison : Comparison -> String

@@ -2,7 +2,7 @@ module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
-import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type, Comparison(..))
+import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type, Comparison(..), PairIndex(..))
 import LambdaChecker exposing (sortDefs)
 import Location exposing (withLocation, fakeLocated, Located)
 import List.Extra
@@ -73,6 +73,7 @@ type Term
   | TmBool Bool
   | TmInt Int
   | TmPair (Located Term) (Located Term)
+  | TmPairAccess (Located Term) (Located PairIndex)
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
   | TmSubtract (Located Term) (Located Term)
@@ -128,6 +129,9 @@ termToExpr names t =
 
     TmPair t1 t2 ->
       termToExprBinaryHelper names EPair t1 t2
+    
+    TmPairAccess pair index ->
+      EPairAccess (termToExpr names pair) index
 
     TmAdd left right ->
       termToExprBinaryHelper names EAdd left right
@@ -180,6 +184,9 @@ termToExprDebug names t =
 
     TmPair t1 t2 ->
       termToExprDebugBinaryHelper names EPair t1 t2
+    
+    TmPairAccess pair index ->
+      EPairAccess (termToExprDebug names pair) index
 
     TmAdd left right ->
       termToExprDebugBinaryHelper names EAdd left right
@@ -263,6 +270,11 @@ exprToTerm ctx expr =
 
     EPair e1 e2 ->
       exprToTermBinaryHelper ctx TmPair e1 e2
+
+    EPairAccess pair index ->
+      TmPairAccess
+      (exprToTerm ctx pair)
+      index
 
     EAdd left right ->
       exprToTermBinaryHelper ctx TmAdd left right
@@ -502,6 +514,30 @@ commonEval f ctx tm =
           withLocation tm <| TmPair newTm1 tm2
         )
 
+    TmPairAccess pair index ->
+      case pair.value of
+        TmPair tm1 tm2 ->
+          if isValue tm1 && isValue tm2 then
+            case index.value of
+              PairIndexOne ->
+                Ok tm1
+              
+              PairIndexTwo ->
+                Ok tm2
+          else
+            f ctx pair |>
+            Result.map
+            (\newPair ->
+              withLocation tm <| TmPairAccess newPair index
+            )
+
+        _ ->
+          f ctx pair |>
+            Result.map
+            (\newPair ->
+              withLocation tm <| TmPairAccess newPair index
+            )
+
     _ ->
       Err tm
 
@@ -645,6 +681,9 @@ isValue t =
     TmInt _ ->
       True
     
+    TmPair tm1 tm2 ->
+      isValue tm1 && isValue tm2
+    
     _ ->
       False
 
@@ -673,6 +712,9 @@ termShift d c t =
 
     TmPair t1 t2 ->
       termShiftBinaryHelper d c TmPair t1 t2
+
+    TmPairAccess pair index ->
+      TmPairAccess (termShift d c pair) index
 
     TmAdd left right ->
       termShiftBinaryHelper d c TmAdd left right
@@ -744,6 +786,9 @@ termSubst j s t =
 
     TmPair t1 t2 ->
       termSubstBinaryHelper j s TmPair t1 t2
+
+    TmPairAccess pair index ->
+      TmPairAccess (termSubst j s pair) index
 
     TmBool _ ->
       t.value

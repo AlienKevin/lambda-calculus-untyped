@@ -1,7 +1,7 @@
 module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
 
 
-import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..), Comparison(..))
+import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..), Comparison(..), PairIndex(..))
 import Dict exposing (Dict)
 import Location exposing (showLocation, isFakeLocated, withLocation, Located)
 import Set exposing (Set)
@@ -15,6 +15,7 @@ type Problem
   | ExpectingTyFunc (Located Type)
   | ExpectingTyBool (Located Type)
   | ExpectingTyInt (Located Type)
+  | ExpectingTyPair (Located Type)
   | MismatchedType (Located Type) (Located Type)
   | CompareTyFunc (Located Type) (Located Type)
 
@@ -116,6 +117,9 @@ checkExpr names expr =
 
     EPair e1 e2 ->
       checkExprBinaryHelper names e1 e2
+
+    EPairAccess pair _ ->
+      checkExpr names pair
 
     EAdd left right ->
       checkExprBinaryHelper names left right
@@ -221,6 +225,22 @@ getType ctx expr =
         (\ty2 ->
           Ok <| withLocation expr <| TyPair ty1 ty2
         )
+      )
+
+    EPairAccess pair index ->
+      getType ctx pair |>
+      Result.andThen
+      (\pairType ->
+        case pairType.value of
+          TyPair ty1 ty2 ->
+            case index.value of
+              PairIndexOne ->
+                Ok ty1
+              
+              PairIndexTwo ->
+                Ok ty2
+          _ ->
+            Err <| ExpectingTyPair pairType
       )
 
     EAdd left right ->
@@ -418,15 +438,15 @@ showProblemWithSingleSourceHelper src problem =
       ]
 
     ExpectingTyFunc ty ->
-      [ "-- EXPECTING FUNCTION TYPE\n"
-      , "I'm expecting a function type here:"
+      [ "-- EXPECTING FUNCTION\n"
+      , "I'm expecting a function here:"
       , showLocation src ty
       , "but got " ++ showType ty.value ++ "."
-      , "Hint: Try changing it to a function type."
+      , "Hint: Try changing it to a function."
       ]
 
     ExpectingTyBool ty ->
-      [ "-- EXPECTING BOOL TYPE\n"
+      [ "-- EXPECTING BOOL\n"
       , "I'm expecting a Bool here:"
       , showLocation src ty
       , "but got " ++ showType ty.value ++ "."
@@ -434,11 +454,19 @@ showProblemWithSingleSourceHelper src problem =
       ]
 
     ExpectingTyInt ty ->
-      [ "-- EXPECTING INT TYPE\n"
+      [ "-- EXPECTING INT\n"
       , "I'm expecting a Int here:"
       , showLocation src ty
       , "but got " ++ showType ty.value ++ "."
       , "Hint: Try changing it to a Int."
+      ]
+    
+    ExpectingTyPair ty ->
+      [ "-- EXPECTING PAIR\n"
+      , "I'm expecting a pair here:"
+      , showLocation src ty
+      , "but got " ++ showType ty.value ++ "."
+      , "Hint: Try changing it to a pair."
       ]
 
     MismatchedType ty1 ty2 ->
@@ -525,6 +553,9 @@ getFreeVariablesHelper boundVariables expr =
 
     EPair e1 e2 ->
       getFreeVariablesBinaryHelper boundVariables e1 e2
+
+    EPairAccess pair _ ->
+      getFreeVariablesHelper boundVariables pair.value
 
     EAdd left right ->
       getFreeVariablesBinaryHelper boundVariables left right

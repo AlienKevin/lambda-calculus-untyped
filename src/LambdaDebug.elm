@@ -17,7 +17,8 @@ v4 = half (double 29302)
 -- v5 = \\x:Bool. (\\x:Bool. not (not false)) == (\\y:Bool. id (id (id true)))
 v6 = 3 >= 4
 v7 = (\\x:(Bool, (Int -> Int) -> Bool). (3, true)) (true, \\x: (Int -> Int). false)
-v8 = ((1, 2), v7)
+v8 = ((\\x:(Int, Int). x) ((1, 2), v7).1).2
+v9 = ((1, 2), (3, 4)).2.2
 id = \\x:Bool. x
 succ = \\a:Int. a + 1
 pred = \\a:Int. a - 1

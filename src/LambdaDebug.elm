@@ -29,6 +29,8 @@ eq = \\a:Int. \\b:Int. a + 2 != b - 2
 not = \\a:Bool. if a then false else true
 recordFunc = \\x:Bool. if x then { a = 3, b = true, ewioew = { b = 3, c = x } } else { a = 0, b = false, ewioew = { b = negate 3, c = false } }
 record = recordFunc false
+recordEquality = { a = { a = 1, b = 2 } , b = 2 } == { b = 2, a = { a = 1, b = 2 }  }
+pairEquality = (1, (false, true)) == (1, (false, true))
 """
   -- "negate = \\a:Int. --2"
 

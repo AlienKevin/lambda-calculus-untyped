@@ -500,10 +500,10 @@ commonEval f ctx tm =
     TmComparison comp left right ->
       case comp of
         CompEQ ->
-          commonEvalEqualityHelper f ctx tm (TmComparison comp) (==) left right
+          commonEvalEqualityHelper f ctx tm (TmComparison comp) (areEqualTerms) left right
         
         CompNE ->
-          commonEvalEqualityHelper f ctx tm (TmComparison comp) (/=) left right
+          commonEvalEqualityHelper f ctx tm (TmComparison comp) (\tm1 tm2 -> not <| areEqualTerms tm1 tm2) left right
 
         _ ->
           let
@@ -591,6 +591,39 @@ commonEval f ctx tm =
     _ ->
       Err tm
 
+
+areEqualTerms : Term -> Term -> Bool
+areEqualTerms tm1 tm2 =
+  case (tm1, tm2) of
+    (TmBool b1, TmBool b2) ->
+      b1 == b2
+    
+    (TmInt i1, TmInt i2) ->
+      i1 == i2
+    
+    (TmPair p1tm1 p1tm2, TmPair p2tm1 p2tm2) ->
+      areEqualTerms p1tm1.value p2tm1.value
+      && areEqualTerms p1tm2.value p2tm2.value
+    
+    (TmRecord r1, TmRecord r2) ->
+      if (Dict.isEmpty <| Dict.diff r1 r2)
+      && (Dict.isEmpty <| Dict.diff r2 r1)
+      then
+        List.all
+          (\(k, (_, v1)) ->
+            case Dict.get k r2 of
+              Just (_, v2) ->
+                areEqualTerms v1.value v2.value
+              
+              Nothing ->
+                False
+          )
+          (Dict.toList r1)
+      else
+        False
+    
+    _ ->
+      False
 
 commonEvalEqualityHelper :
   (Ctx -> Located Term -> Result (Located Term) (Located Term))

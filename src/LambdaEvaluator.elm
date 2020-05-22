@@ -74,6 +74,7 @@ type Term
   | TmInt Int
   | TmPair (Located Term) (Located Term)
   | TmPairAccess (Located Term) (Located PairIndex)
+  | TmRecord (Dict String (Located String, Located Term))
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
   | TmSubtract (Located Term) (Located Term)
@@ -133,6 +134,14 @@ termToExpr names t =
     TmPairAccess pair index ->
       EPairAccess (termToExpr names pair) index
 
+    TmRecord r ->
+      ERecord <|
+      Dict.map
+        (\_ (label, value) ->
+          (label, termToExpr names value)
+        )
+        r
+
     TmAdd left right ->
       termToExprBinaryHelper names EAdd left right
 
@@ -187,6 +196,14 @@ termToExprDebug names t =
     
     TmPairAccess pair index ->
       EPairAccess (termToExprDebug names pair) index
+    
+    TmRecord r ->
+      ERecord <|
+        Dict.map
+          (\_ (label, value) ->
+            (label, termToExprDebug names value)
+          )
+          r
 
     TmAdd left right ->
       termToExprDebugBinaryHelper names EAdd left right
@@ -275,6 +292,14 @@ exprToTerm ctx expr =
       TmPairAccess
       (exprToTerm ctx pair)
       index
+    
+    ERecord r ->
+      TmRecord <|
+        Dict.map
+          (\_ (label, value) ->
+            (label, exprToTerm ctx value)
+          )
+          r
 
     EAdd left right ->
       exprToTermBinaryHelper ctx TmAdd left right
@@ -538,6 +563,31 @@ commonEval f ctx tm =
               withLocation tm <| TmPairAccess newPair index
             )
 
+    TmRecord r ->
+      let
+        _ = Debug.log "r" <| LambdaParser.showExpr <| .value <| termToExprDebug [] tm
+      in
+      if isValue tm then
+        Err tm
+      else
+        Ok <|
+        withLocation tm <|
+        TmRecord <|
+        Dict.map
+          (\_ (label, value) ->
+            if isValue value then
+              (label, value)
+            else
+              (label
+              , case f ctx value of
+                Ok nextValue ->
+                  nextValue
+                Err _ ->
+                  value
+              )
+          )
+          r
+
     _ ->
       Err tm
 
@@ -683,6 +733,13 @@ isValue t =
     
     TmPair tm1 tm2 ->
       isValue tm1 && isValue tm2
+
+    TmRecord r ->
+      List.all
+      (\(_, (_, value)) ->
+        isValue value
+      )
+      (Dict.toList r)
     
     _ ->
       False
@@ -715,6 +772,14 @@ termShift d c t =
 
     TmPairAccess pair index ->
       TmPairAccess (termShift d c pair) index
+
+    TmRecord r ->
+      TmRecord <|
+      Dict.map
+        (\_ (label, value) ->
+          (label, termShift d c value)
+        )
+        r
 
     TmAdd left right ->
       termShiftBinaryHelper d c TmAdd left right
@@ -789,6 +854,14 @@ termSubst j s t =
 
     TmPairAccess pair index ->
       TmPairAccess (termSubst j s pair) index
+
+    TmRecord r ->
+      TmRecord <|
+      Dict.map
+        (\_ (label, value) ->
+          (label, termSubst j s value)
+        )
+        r
 
     TmBool _ ->
       t.value

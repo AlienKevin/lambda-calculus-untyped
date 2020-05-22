@@ -121,6 +121,14 @@ checkExpr names expr =
     EPairAccess pair _ ->
       checkExpr names pair
 
+    ERecord r ->
+      Dict.foldl
+        (\_ (_, value) problems ->
+          checkExpr names value ++ problems
+        )
+        []
+        r
+
     EAdd left right ->
       checkExprBinaryHelper names left right
 
@@ -243,6 +251,23 @@ getType ctx expr =
             Err <| ExpectingTyPair pairType
       )
 
+    ERecord r ->
+      Dict.foldl
+        (\_ (label, value) recordType ->
+          recordType |>
+          Result.andThen
+          (\ty ->
+            getType ctx value |>
+            Result.map
+            (\valueType ->
+              Dict.insert label.value (label, valueType) ty
+            )
+          )
+        )
+        (Ok Dict.empty)
+        r |>
+      Result.map (withLocation expr << TyRecord)
+
     EAdd left right ->
       getTypeFromBinaryInts ctx expr left right
 
@@ -328,6 +353,33 @@ areEqualTypes ty1 ty2 =
     (TyPair p1ty1 p1ty2, TyPair p2ty1 p2ty2) ->
       areEqualTypes p1ty1.value p2ty1.value
       && areEqualTypes p1ty2.value p2ty2.value
+
+    (TyRecord r1, TyRecord r2) ->
+      if not (Dict.isEmpty <| Dict.diff r1 r2)
+      || not (Dict.isEmpty <| Dict.diff r2 r1)
+      then
+        False
+      else
+        dictFoldlWhile
+          (\labelStr (_, r1ty) _ ->
+            case Dict.get labelStr r2 of
+              Nothing ->
+                ( False
+                , Done
+                )
+              
+              Just (_, r2ty) ->
+                if areEqualTypes r1ty.value r2ty.value then
+                  ( True
+                  , Loop
+                  )
+                else
+                  ( False
+                  , Done
+                  )
+          )
+          True
+          r1
     
     (TyFunc fromType1 toType1, TyFunc fromType2 toType2) ->
       areEqualTypes fromType1.value fromType2.value
@@ -335,6 +387,40 @@ areEqualTypes ty1 ty2 =
 
     _ ->
       False
+
+
+type Step
+  = Loop
+  | Done
+
+
+dictFoldlWhile : (comparable -> v -> b -> (b, Step)) -> b -> Dict comparable v -> b
+dictFoldlWhile f initial dict =
+  dictFoldlWhileHelper f initial (Dict.keys dict) dict
+
+
+dictFoldlWhileHelper : (comparable -> v -> b -> (b, Step)) -> b -> List comparable -> Dict comparable v -> b
+dictFoldlWhileHelper f prevResult keys dict =
+  case keys of
+    [] ->
+      prevResult
+    
+    firstKey :: restKeys ->
+      case Dict.get firstKey dict of
+        Just firstValue ->
+          let
+            (result, step) =
+              f firstKey firstValue prevResult
+          in
+          case step of
+            Loop ->
+              dictFoldlWhileHelper f result restKeys dict
+            
+            Done ->
+              result
+        
+        Nothing ->
+          prevResult
 
 
 addBinding : Ctx -> String -> Type -> Ctx
@@ -556,6 +642,14 @@ getFreeVariablesHelper boundVariables expr =
 
     EPairAccess pair _ ->
       getFreeVariablesHelper boundVariables pair.value
+
+    ERecord r ->
+      Dict.foldl
+        (\_ (_, value) freeVars ->
+          getFreeVariablesHelper boundVariables value.value ++ freeVars
+        )
+        []
+        r
 
     EAdd left right ->
       getFreeVariablesBinaryHelper boundVariables left right

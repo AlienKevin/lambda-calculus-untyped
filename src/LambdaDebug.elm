@@ -27,6 +27,8 @@ half = \\a:Int. a / 2
 negate = \\a:Int. 2 + -2
 eq = \\a:Int. \\b:Int. a + 2 != b - 2
 not = \\a:Bool. if a then false else true
+recordFunc = \\x:Bool. if x then { a = 3, b = true, ewioew = { b = 3, c = x } } else { a = 0, b = false, ewioew = { b = negate 3, c = false } }
+record = recordFunc false
 """
   -- "negate = \\a:Int. --2"
 

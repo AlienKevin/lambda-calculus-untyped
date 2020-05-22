@@ -4,6 +4,7 @@ module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, sh
 import Parser.Advanced exposing (..)
 import Pratt.Advanced as Pratt
 import Set exposing (Set)
+import Dict exposing (Dict)
 import List.Extra
 import Location exposing (..)
 
@@ -17,6 +18,7 @@ type Context
   | CAbstraction
   | CApplication
   | CIf
+  | CType
 
 
 type Problem
@@ -33,6 +35,8 @@ type Problem
   | ExpectingAsterisk
   | ExpectingSlash
   | ExpectingComma
+  | ExpectingLeftBrace
+  | ExpectingRightBrace
   | ExpectingOne
   | ExpectingTwo
   | ExpectingComparison Comparison
@@ -66,6 +70,7 @@ type Expr
   | EInt Int
   | EPair (Located Expr) (Located Expr)
   | EPairAccess (Located Expr) (Located PairIndex)
+  | ERecord (Dict String (Located String, Located Expr))
   | EAdd (Located Expr) (Located Expr)
   | ESubtract (Located Expr) (Located Expr)
   | EMultiplication (Located Expr) (Located Expr)
@@ -92,6 +97,7 @@ type Type
   = TyBool
   | TyInt
   | TyPair (Located Type) (Located Type)
+  | TyRecord (Dict String (Located String, Located Type))
   | TyFunc (Located Type) (Located Type)
 
 
@@ -331,6 +337,7 @@ parseComponent =
   |= oneOf
     [ parseAbstraction
     , parseGroupOrPair
+    , parseRecord
     , parseIf
     , parseBool
     , parseInt
@@ -371,6 +378,35 @@ parseInt =
     )
 
 
+parseRecord : LambdaParser (Located Expr)
+parseRecord =
+  located <|
+  map (\pairs ->
+    ERecord <|
+    List.foldl
+      (\(label, value) record ->
+        Dict.insert label.value (label, value) record
+      )
+      Dict.empty
+      pairs
+  ) <|
+  sequence
+    { start = Token "{" ExpectingLeftBrace
+    , separator = Token "," ExpectingComma
+    , end = Token "}" ExpectingRightBrace
+    , spaces = sps
+    , item =
+      succeed Tuple.pair
+        |= checkIndent parseName
+        |. sps
+        |. symbol (Token "=" ExpectingEqual)
+        |. sps
+        |= lazy (\_ -> internalParseExpr)
+        |. sps
+    , trailing = Forbidden
+    }
+
+
 parseGroupOrPair : LambdaParser (Located Expr)
 parseGroupOrPair =
   located <|
@@ -409,7 +445,7 @@ parseAbstraction =
     |. sps
     |. symbol (Token ":" ExpectingColon)
     |. sps
-    |= parseType
+    |= inContext CType parseType
     |. sps
     |. symbol (Token "." ExpectingDot)
     |. sps
@@ -466,6 +502,7 @@ parseType =
     |= oneOf
       [ parseBaseType
       , parseGroupOrPairType
+      , parseRecordType
       ]
     |= (optional <|
       succeed identity
@@ -509,6 +546,35 @@ parseGroupOrPairType =
       |. sps
     )
     |. symbol (Token ")" ExpectingRightParen)
+
+
+parseRecordType : LambdaParser (Located Type)
+parseRecordType =
+  located <|
+  map (\pairs ->
+    TyRecord <|
+    List.foldl
+      (\(label, ty) record ->
+        Dict.insert label.value (label, ty) record
+      )
+      Dict.empty
+      pairs
+  ) <|
+  sequence
+    { start = Token "{" ExpectingLeftBrace
+    , separator = Token "," ExpectingComma
+    , end = Token "}" ExpectingRightBrace
+    , spaces = sps
+    , item =
+      succeed Tuple.pair
+        |= checkIndent parseName
+        |. sps
+        |. symbol (Token ":" ExpectingColon)
+        |. sps
+        |= lazy (\_ -> parseType)
+        |. sps
+    , trailing = Forbidden
+    }
 
 
 parseVariable : LambdaParser (Located Expr)
@@ -671,6 +737,12 @@ showProblem p =
     ExpectingComma ->
       "a ','"
 
+    ExpectingLeftBrace ->
+      "a '{'"
+    
+    ExpectingRightBrace ->
+      "a '}'"
+
     ExpectingOne ->
       "a '1'"
     
@@ -742,6 +814,9 @@ showProblemContext context =
 
     CIf ->
       "if expression"
+    
+    CType ->
+      "type annotation"
 
 
 showProblemLocation : Int -> Int -> String -> String
@@ -821,6 +896,23 @@ showExpr expr =
     EPairAccess pair index ->
       showExpr pair.value ++ "." ++ showPairIndex index.value
 
+    ERecord r ->
+      (\pairs ->
+        if String.isEmpty pairs then
+          "{}"
+        else if not <| String.contains "\n" pairs then
+          "{ " ++ pairs ++ " }"
+        else
+          indentStr <| "\n{ " ++ pairs ++ "\n}"
+      ) <|
+      String.join "\n, " <|
+      Dict.foldr
+        (\_ (label, value) list ->
+          (label.value ++ " = " ++ showExpr value.value) :: list
+        )
+        []
+        r
+
     EAdd left right ->
       "(" ++ showExpr left.value ++ " + " ++ showExpr right.value ++ ")"
 
@@ -886,6 +978,23 @@ showType t =
     TyPair t1 t2 ->
       "(" ++ showType t1.value ++ ", " ++ showType t2.value ++ ")"
 
+    TyRecord r ->
+      (\pairs ->
+        if String.isEmpty pairs then
+          "{}"
+        else if not <| String.contains "\n" pairs then
+          "{ " ++ pairs ++ " }"
+        else
+          indentStr <| "\n{ " ++ pairs ++ "\n}"
+      ) <|
+      String.join "\n, " <|
+      Dict.foldr
+        (\_ (label, ty) list ->
+          (label.value ++ " = " ++ showType ty.value) :: list
+        )
+        []
+        r
+
     TyFunc t1 t2 ->
       ( case t1.value of
         TyFunc _ _ ->
@@ -896,6 +1005,11 @@ showType t =
       )
       ++ "->"
       ++ showType t2.value
+
+
+indentStr : String -> String
+indentStr str =
+  String.replace "\n" "\n  " str
 
 
 located : LambdaParser a -> LambdaParser (Located a)

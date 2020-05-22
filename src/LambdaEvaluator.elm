@@ -360,7 +360,7 @@ evalTermCallByValue ctx0 t0 =
   eval 0 ctx0 t0
 
 
-evalTermCallByValueHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
+evalTermCallByValueHelper : Ctx -> Located Term -> Result () (Located Term)
 evalTermCallByValueHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
@@ -410,7 +410,7 @@ evalTermCallByName ctx0 t0 =
   eval 0 ctx0 t0
 
 
-evalTermCallByNameHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
+evalTermCallByNameHelper : Ctx -> Located Term -> Result () (Located Term)
 evalTermCallByNameHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
@@ -454,7 +454,7 @@ evalTermFull ctx0 t0 =
   eval 0 ctx0 t0
 
 
-evalTermFullHelper : Ctx -> Located Term -> Result (Located Term) (Located Term)
+evalTermFullHelper : Ctx -> Located Term -> Result () (Located Term)
 evalTermFullHelper ctx t =
   case t.value of
     TmApplication t1 t2 ->
@@ -463,32 +463,36 @@ evalTermFullHelper ctx t =
           Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
         
         _ ->
-          combineResults
-          (\a b -> withLocation t <| TmApplication a b)
-          (evalTermFullHelper ctx t1)
-          (evalTermFullHelper ctx t2)
+          let
+            a =
+              Result.withDefault t1 <| evalTermFullHelper ctx t1
+            
+            b =
+              Result.withDefault t2 <| evalTermFullHelper ctx t2
+          in
+          Ok <| withLocation t <| TmApplication a b
     
     TmAbstraction boundVar boundType t1 ->
-      mapBothResults
+      evalTermFullHelper ctx t1 |>
+      Result.map
       (\newT1 ->
         withLocation t <| TmAbstraction boundVar boundType newT1
       )
-      (evalTermFullHelper ctx t1)
-
+      
     _ ->
       commonEval evalTermFullHelper ctx t
 
 
-commonEval : (Ctx -> Located Term -> Result (Located Term) (Located Term)) -> Ctx -> Located Term -> Result (Located Term) (Located Term)
+commonEval : (Ctx -> Located Term -> Result () (Located Term)) -> Ctx -> Located Term -> Result () (Located Term)
 commonEval f ctx tm =
   case tm.value of
     TmIf condition thenBranch elseBranch ->
       case condition.value of
         TmBool bool ->
           if bool then
-            Ok <| unwrapResult <| f ctx thenBranch
+            Ok <| Result.withDefault thenBranch <| f ctx thenBranch
           else
-            Ok <| unwrapResult <| f ctx elseBranch
+            Ok <| Result.withDefault elseBranch <| f ctx elseBranch
 
         _ ->
           f ctx condition |>
@@ -536,8 +540,8 @@ commonEval f ctx tm =
           commonEvalComparisonIntsHelper f ctx tm (TmComparison comp) compFunc left right
 
     TmPair tm1 tm2 ->
-      if isValue tm1 && isValue tm2 then
-        Ok tm
+      if isValue tm then
+        Err ()
       else if isValue tm1 then
         f ctx tm2 |>
         Result.map
@@ -576,11 +580,8 @@ commonEval f ctx tm =
             )
 
     TmRecord r ->
-      let
-        _ = Debug.log "r" <| LambdaParser.showExpr <| .value <| termToExprDebug [] tm
-      in
       if isValue tm then
-        Err tm
+        Err ()
       else
         Ok <|
         withLocation tm <|
@@ -609,10 +610,10 @@ commonEval f ctx tm =
                 Ok value
               
               Nothing ->
-                Err tm
+                Err ()
           
           _ ->
-            Err tm
+            Err ()
       else
         f ctx record |>
           Result.map
@@ -621,7 +622,7 @@ commonEval f ctx tm =
           )
 
     _ ->
-      Err tm
+      Err ()
 
 
 areEqualTerms : Term -> Term -> Bool
@@ -658,14 +659,14 @@ areEqualTerms tm1 tm2 =
       False
 
 commonEvalEqualityHelper :
-  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  (Ctx -> Located Term -> Result () (Located Term))
   -> Ctx
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Term -> Term -> Bool)
   -> Located Term
   -> Located Term
-  -> Result (Located Term) (Located Term)
+  -> Result () (Located Term)
 commonEvalEqualityHelper f ctx tm tmName op left right =
   if isValue left && isValue right then
     Ok <| withLocation tm <| TmBool <| op left.value right.value
@@ -684,14 +685,14 @@ commonEvalEqualityHelper f ctx tm tmName op left right =
 
 
 commonEvalComparisonIntsHelper :
-  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  (Ctx -> Located Term -> Result () (Located Term))
   -> Ctx
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Int -> Int -> Bool)
   -> Located Term
   -> Located Term
-  -> Result (Located Term) (Located Term)
+  -> Result () (Located Term)
 commonEvalComparisonIntsHelper f ctx tm tmName op left right =
   case left.value of
     TmInt leftValue ->
@@ -715,14 +716,14 @@ commonEvalComparisonIntsHelper f ctx tm tmName op left right =
 
 
 commonEvalBinaryIntsHelper :
-  (Ctx -> Located Term -> Result (Located Term) (Located Term))
+  (Ctx -> Located Term -> Result () (Located Term))
   -> Ctx
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Int -> Int -> Int)
   -> Located Term
   -> Located Term
-  -> Result (Located Term) (Located Term)
+  -> Result () (Located Term)
 commonEvalBinaryIntsHelper f ctx tm tmName op left right =
   case left.value of
     TmInt leftValue ->

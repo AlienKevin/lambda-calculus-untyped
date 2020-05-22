@@ -71,6 +71,7 @@ type Expr
   | EPair (Located Expr) (Located Expr)
   | EPairAccess (Located Expr) (Located PairIndex)
   | ERecord (Dict String (Located String, Located Expr))
+  | ERecordAccess (Located Expr) (Located String)
   | EAdd (Located Expr) (Located Expr)
   | ESubtract (Located Expr) (Located Expr)
   | EMultiplication (Located Expr) (Located Expr)
@@ -329,7 +330,16 @@ parseComponent =
         .value <|
         List.foldl
           (\index e ->
-            withLocation e <| EPairAccess e index
+            case index.value of
+              "1" ->
+                withLocation e <| EPairAccess e (withLocation index PairIndexOne)
+              
+              "2" ->
+                withLocation e <| EPairAccess e (withLocation index PairIndexTwo)
+
+              _ ->
+                withLocation e <| ERecordAccess e index
+
           )
           expr
           pairIndices
@@ -349,8 +359,9 @@ parseComponent =
       [ succeed (\index -> Loop <| index :: revIndices)
         |. symbol (Token "." ExpectingDot)
         |= ( located <| oneOf
-          [ map (\_ -> PairIndexOne) <| symbol (Token "1" ExpectingOne)
-          , map (\_ -> PairIndexTwo) <| symbol (Token "2" ExpectingTwo)
+          [ map (\_ -> "1") <| symbol (Token "1" ExpectingOne)
+          , map (\_ -> "2") <| symbol (Token "2" ExpectingTwo)
+          , map .value parseName
           ]
         )
       , succeed ()
@@ -912,6 +923,9 @@ showExpr expr =
         )
         []
         r
+
+    ERecordAccess r label ->
+      "(" ++ showExpr r.value ++ ")." ++ label.value
 
     EAdd left right ->
       "(" ++ showExpr left.value ++ " + " ++ showExpr right.value ++ ")"

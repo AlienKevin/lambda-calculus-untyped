@@ -31,6 +31,7 @@ recordFunc = \\x:Bool. if x then { a = 3, b = true, ewioew = { b = 3, c = x } } 
 record = recordFunc false
 recordEquality = { a = { a = 1, b = 2 } , b = 2 } == { b = 2, a = { a = 1, b = 2 }  }
 pairEquality = (1, (false, true)) == (1, (false, true))
+recordAccess = ({ a = id (id (not true)), b = 4 }, 4).1.a
 """
   -- "negate = \\a:Int. --2"
 

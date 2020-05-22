@@ -75,6 +75,7 @@ type Term
   | TmPair (Located Term) (Located Term)
   | TmPairAccess (Located Term) (Located PairIndex)
   | TmRecord (Dict String (Located String, Located Term))
+  | TmRecordAccess (Located Term) (Located String)
   | TmIf (Located Term) (Located Term) (Located Term)
   | TmAdd (Located Term) (Located Term)
   | TmSubtract (Located Term) (Located Term)
@@ -142,6 +143,9 @@ termToExpr names t =
         )
         r
 
+    TmRecordAccess record label ->
+      ERecordAccess (termToExpr names record) label
+
     TmAdd left right ->
       termToExprBinaryHelper names EAdd left right
 
@@ -204,6 +208,9 @@ termToExprDebug names t =
             (label, termToExprDebug names value)
           )
           r
+
+    TmRecordAccess record label ->
+      ERecordAccess (termToExprDebug names record) label
 
     TmAdd left right ->
       termToExprDebugBinaryHelper names EAdd left right
@@ -300,6 +307,11 @@ exprToTerm ctx expr =
             (label, exprToTerm ctx value)
           )
           r
+
+    ERecordAccess record label ->
+      TmRecordAccess
+      (exprToTerm ctx record)
+      label
 
     EAdd left right ->
       exprToTermBinaryHelper ctx TmAdd left right
@@ -588,6 +600,26 @@ commonEval f ctx tm =
           )
           r
 
+    TmRecordAccess record label ->
+      if isValue record then
+        case record.value of
+          TmRecord r ->
+            case Dict.get label.value r of
+              Just (_, value) ->
+                Ok value
+              
+              Nothing ->
+                Err tm
+          
+          _ ->
+            Err tm
+      else
+        f ctx record |>
+          Result.map
+          (\newRecord ->
+            withLocation tm <| TmRecordAccess newRecord label
+          )
+
     _ ->
       Err tm
 
@@ -814,6 +846,9 @@ termShift d c t =
         )
         r
 
+    TmRecordAccess record label ->
+      TmRecordAccess (termShift d c record) label
+
     TmAdd left right ->
       termShiftBinaryHelper d c TmAdd left right
 
@@ -895,6 +930,9 @@ termSubst j s t =
           (label, termSubst j s value)
         )
         r
+
+    TmRecordAccess record label ->
+      TmRecordAccess (termSubst j s record) label
 
     TmBool _ ->
       t.value

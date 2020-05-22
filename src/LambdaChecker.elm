@@ -16,6 +16,8 @@ type Problem
   | ExpectingTyBool (Located Type)
   | ExpectingTyInt (Located Type)
   | ExpectingTyPair (Located Type)
+  | ExpectingTyRecord (Located Type)
+  | ExpectingTyRecordWithLabel (Located String) (Located Type)
   | MismatchedType (Located Type) (Located Type)
   | CompareTyFunc (Located Type) (Located Type)
 
@@ -128,6 +130,9 @@ checkExpr names expr =
         )
         []
         r
+
+    ERecordAccess r _ ->
+      checkExpr names r
 
     EAdd left right ->
       checkExprBinaryHelper names left right
@@ -267,6 +272,23 @@ getType ctx expr =
         (Ok Dict.empty)
         r |>
       Result.map (withLocation expr << TyRecord)
+
+    ERecordAccess record label ->
+      getType ctx record |>
+      Result.andThen
+      (\recordType ->
+        case recordType.value of
+          TyRecord r ->
+            case Dict.get label.value r of
+              Just (_, ty) ->
+                Ok ty
+              
+              Nothing ->
+                Err <| ExpectingTyRecordWithLabel label recordType
+
+          _ ->
+            Err <| ExpectingTyRecord recordType
+      )
 
     EAdd left right ->
       getTypeFromBinaryInts ctx expr left right
@@ -555,6 +577,22 @@ showProblemWithSingleSourceHelper src problem =
       , "Hint: Try changing it to a pair."
       ]
 
+    ExpectingTyRecord ty ->
+      [ "-- EXPECTING RECORD\n"
+      , "I'm expecting a record here:"
+      , showLocation src ty
+      , "but got " ++ showType ty.value ++ "."
+      , "Hint: Try changing it to a record."
+      ]
+
+    ExpectingTyRecordWithLabel label recordType ->
+      [ "-- EXPECTING LABEL\n"
+      , "I'm expecting the label `" ++ label.value ++ "` in this record:"
+      , showLocation src recordType
+      , "but I can't find it."
+      , "Hint: Try adding the label `" ++ label.value ++ "` to this record."
+      ]
+
     MismatchedType ty1 ty2 ->
       [ "-- MISMATCHED TYPES\n"
       , "I'm expecting a " ++ showType ty1.value ++ " type here:"
@@ -650,6 +688,9 @@ getFreeVariablesHelper boundVariables expr =
         )
         []
         r
+
+    ERecordAccess record _ ->
+      getFreeVariablesHelper boundVariables record.value
 
     EAdd left right ->
       getFreeVariablesBinaryHelper boundVariables left right

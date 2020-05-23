@@ -54,6 +54,8 @@ type Problem
   | ExpectingTrue
   | ExpectingFalse
   | ExpectingInt
+  | ExpectingLet
+  | ExpectingIn
 
 
 type alias Def =
@@ -77,7 +79,8 @@ type Expr
   | EMultiplication (Located Expr) (Located Expr)
   | EDivision (Located Expr) (Located Expr)
   | EComparison Comparison (Located Expr) (Located Expr)
-  | EIf (Located Expr) (Located Expr) (Located Expr) 
+  | EIf (Located Expr) (Located Expr) (Located Expr)
+  | ELet (Located String, Located Expr) (Located Expr)
 
 
 type PairIndex
@@ -105,7 +108,7 @@ type Type
 reserved : Set String
 reserved =
   Set.fromList
-    [ "if", "then", "else", "true", "false" ]
+    [ "if", "then", "else", "true", "false", "let", "in" ]
 
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
@@ -220,7 +223,8 @@ internalParseExpr =
   in
   Pratt.expression
     { oneOf =
-      [ subexpr parseApplication
+      [ subexpr parseLetBinding
+      , subexpr parseApplication
       , subexpr parseBool
       , subexpr parseInt
       ]
@@ -291,6 +295,32 @@ parseApplication =
       )
     )
     parseApplicationHelper
+
+
+parseLetBinding : LambdaParser (Located Expr)
+parseLetBinding =
+  located <|
+  succeed
+  (\binding expr ->
+    ELet binding expr
+  )
+    |. keyword (Token "let" ExpectingLet)
+    |= ( indent <|
+      succeed Tuple.pair
+      |. sps
+      |= checkIndent parseName
+      |. sps
+      |. symbol (Token "=" ExpectingEqual)
+      |= ( indent <|
+        succeed identity
+        |. sps
+        |= lazy (\_ -> internalParseExpr)
+        |. sps
+        |. keyword (Token "in" ExpectingIn)
+        |. sps
+      )
+    )
+    |= lazy (\_ -> internalParseExpr)
 
 
 parseApplicationHelper : LambdaParser (List (Located Expr))
@@ -805,6 +835,12 @@ showProblem p =
     ExpectingInt ->
       "an integer"
 
+    ExpectingLet ->
+      "the keyword 'let'"
+    
+    ExpectingIn ->
+      "the keyword 'in'"
+
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
 showProblemContextStack contexts =
@@ -946,6 +982,15 @@ showExpr expr =
       "if " ++ showExpr condition.value
       ++ " then " ++ showExpr thenBranch.value
       ++ " else " ++ showExpr elseBranch.value
+
+    ELet (label, e1) e2 ->
+      indentStr <|
+      "\nlet"
+      ++ indentStr (
+        "\n" ++ label.value ++ " = " ++ showExpr e1.value
+      )
+      ++ "\nin"
+      ++ "\n" ++ showExpr e2.value
 
 
 showPairIndex : PairIndex -> String

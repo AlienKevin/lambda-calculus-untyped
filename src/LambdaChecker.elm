@@ -154,6 +154,10 @@ checkExpr names expr =
       ++ checkExpr names thenBranch
       ++ checkExpr names elseBranch
 
+    ELet (label, e1) e2 ->
+      checkExpr names e1
+      ++ checkExpr (Dict.insert label.value label names) e2
+
 
 checkExprBinaryHelper : Dict String (Located String) -> Located Expr -> Located Expr -> List Problem
 checkExprBinaryHelper names left right =
@@ -227,6 +231,17 @@ getType ctx expr =
         
           _ ->
             Err <| ExpectingTyBool conditionType 
+      )
+    
+    ELet (label, e1) e2 ->
+      getType ctx e1 |>
+      Result.andThen
+      (\bindingType ->
+        let
+          innerCtx =
+            addBinding ctx label.value bindingType.value
+        in
+        getType innerCtx e2
       )
 
     EPair e1 e2 ->
@@ -711,6 +726,10 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesHelper boundVariables condition.value
       ++ getFreeVariablesHelper boundVariables thenBranch.value
       ++ getFreeVariablesHelper boundVariables elseBranch.value
+
+    ELet (label, e1) e2 ->
+      getFreeVariablesHelper boundVariables e1.value
+      ++ getFreeVariablesHelper (Set.insert label.value boundVariables) e2.value
 
 
 getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> List (Located String)

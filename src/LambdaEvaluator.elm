@@ -82,6 +82,7 @@ type Term
   | TmMultiplication (Located Term) (Located Term)
   | TmDivision (Located Term) (Located Term)
   | TmComparison Comparison (Located Term) (Located Term)
+  | TmLet (Located String, Located Term) (Located Term)
 
 
 type alias Ctx =
@@ -128,6 +129,17 @@ termToExpr names t =
       (termToExpr names condition)
       (termToExpr names thenBranch)
       (termToExpr names elseBranch)
+
+    TmLet (label, tm1) tm2 ->
+      let
+        _ = Debug.log "AL -> label" <| label.value
+        _ = Debug.log "AL -> newNames" <| newNames
+        (newNames, newName) =
+          pickNewName names label.value
+      in
+      ELet
+      (withLocation label newName, termToExpr names tm1)
+      (termToExpr newNames tm2)
 
     TmPair t1 t2 ->
       termToExprBinaryHelper names EPair t1 t2
@@ -194,6 +206,11 @@ termToExprDebug names t =
       (termToExprDebug names condition)
       (termToExprDebug names thenBranch)
       (termToExprDebug names elseBranch)
+
+    TmLet (label, tm1) tm2 ->
+      ELet
+      (label, termToExprDebug names tm1)
+      (termToExprDebug names tm2)
 
     TmPair t1 t2 ->
       termToExprDebugBinaryHelper names EPair t1 t2
@@ -291,6 +308,23 @@ exprToTerm ctx expr =
       (exprToTerm ctx condition)
       (exprToTerm ctx thenBranch)
       (exprToTerm ctx elseBranch)
+
+    ELet (label, e1) e2 ->
+      let
+        innerCtx =
+          ctx |>
+          Dict.map (\_ s -> termShift 1 0 s) |>
+          Dict.insert label.value (withLocation label <| TmVariable 0)
+        
+        -- _ = Debug.log "AL -> ctx" <| ctx
+
+        -- _ = Debug.log "AL -> innerCtx" <| innerCtx
+        
+        -- _ = Debug.log "AL -> exprToTerm innerCtx e2" <| showTermDebug <| .value <| exprToTerm innerCtx e2
+      in
+      TmLet
+      (label, exprToTerm ctx e1)
+      (exprToTerm innerCtx e2)
 
     EPair e1 e2 ->
       exprToTermBinaryHelper ctx TmPair e1 e2
@@ -501,6 +535,24 @@ commonEval f ctx tm =
             withLocation tm <| TmIf newCondition thenBranch elseBranch
           )
 
+    TmLet (label, tm1) tm2 ->
+      let
+        _ = Debug.log "AL -> tm1" <| tm1.value
+        _ = Debug.log "AL -> termShift 1 0 tm1" <| termShift 1 0 tm1
+        _ = Debug.log "AL -> (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| (termSubst 0 (termShift 1 0 tm1) tm2).value
+        _ = Debug.log "AL -> termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| .value <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
+        _ = Debug.log "AL -> tm2" <| showTermDebug tm2.value
+      in
+      if isValue tm1 then
+        -- Ok <| termSubst 0 tm1 tm2
+        Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
+      else
+        f ctx tm1 |>
+        Result.map
+        (\newTm1 ->
+          withLocation tm <| TmLet (label, newTm1) tm2
+        )
+
     TmAdd left right ->
       commonEvalBinaryIntsHelper f ctx tm TmAdd (+) left right
     
@@ -516,7 +568,7 @@ commonEval f ctx tm =
     TmComparison comp left right ->
       case comp of
         CompEQ ->
-          commonEvalEqualityHelper f ctx tm (TmComparison comp) (areEqualTerms) left right
+          commonEvalEqualityHelper f ctx tm (TmComparison comp) areEqualTerms left right
         
         CompNE ->
           commonEvalEqualityHelper f ctx tm (TmComparison comp) (\tm1 tm2 -> not <| areEqualTerms tm1 tm2) left right
@@ -746,45 +798,6 @@ commonEvalBinaryIntsHelper f ctx tm tmName op left right =
       )
 
 
-unwrapResult : Result a a -> a
-unwrapResult r =
-  case r of
-    Ok o ->
-      o
-    
-    Err e ->
-      e
-
-
-mapBothResults : (a -> b) -> Result a a -> Result b b
-mapBothResults f r =
-  case r of
-    Ok o ->
-      Ok <| f o
-    
-    Err e ->
-      Err <| f e
-
-combineResults : (a -> a -> b) -> Result a a -> Result a a -> Result b b
-combineResults f r1 r2 =
-  -- let
-    -- _ = Debug.log "AL -> r1" <| r1
-    -- _ = Debug.log "AL -> r2" <| r2
-  -- in
-  case (r1, r2) of
-    (Ok o1, Ok o2) ->
-      Ok <| f o1 o2
-    
-    (Ok o1, Err e2) ->
-      Ok <| f o1 e2
-    
-    (Err e1, Ok o2) ->
-      Ok <| f e1 o2
-    
-    (Err e1, Err e2) ->
-      Err <| f e1 e2
-
-
 isValue : Located Term -> Bool
 isValue t =
   case t.value of
@@ -832,6 +845,11 @@ termShift d c t =
       (termShift d c condition)
       (termShift d c thenBranch)
       (termShift d c elseBranch)
+
+    TmLet (label, tm1) tm2 ->
+      TmLet
+      (label, termShift d c tm1)
+      (termShift d (c + 1) tm2)
 
     TmPair t1 t2 ->
       termShiftBinaryHelper d c TmPair t1 t2
@@ -902,6 +920,11 @@ termSubst j s t =
       (termSubst j s condition)
       (termSubst j s thenBranch)
       (termSubst j s elseBranch)
+    
+    TmLet (label, tm1) tm2 ->
+      TmLet
+      (label, termSubst j s tm1)
+      (termSubst (j + 1) (termShift 1 0 s) tm2)
     
     TmAdd left right ->
       termSubstBinaryHelper j s TmAdd left right

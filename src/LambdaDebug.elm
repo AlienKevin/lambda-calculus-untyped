@@ -32,7 +32,30 @@ record = recordFunc false
 recordEquality = { a = { a = 1, b = 2 } , b = 2 } == { b = 2, a = { a = 1, b = 2 }  }
 pairEquality = (1, (false, true)) == (1, (false, true))
 recordAccess = ({ a = id (id (not true)), b = 4 }, 4).1.a
+letBinding =
+  let
+    a = double (double 3)
+  in
+  double a
+letBinding2 = let a = 3 in (let b = \\x:Int. x in b) (let c = a * 2 in c)
+letBinding3 = let a = 3 in (let b = \\x:Int. x in b) (let c = 3 in c)
+letBinding4 = let a = 1 in let b = a + 1 in let c = b + 1 in a + b + c
 """
+  -- """letBinding2 =
+  -- let a = 3 in (let b = \\x:Int. x in b) (let c = a * 2 in c)
+  -- """
+--   """double =
+--   \\x:Int. x * 2
+
+-- letBinding =
+--   let
+--     a = 3
+--   in
+--   let
+--     b = a
+--   in
+--   double (double b)
+--   """
   -- "negate = \\a:Int. --2"
 
 main =

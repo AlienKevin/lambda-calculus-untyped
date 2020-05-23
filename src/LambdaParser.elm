@@ -81,6 +81,7 @@ type Expr
   | EComparison Comparison (Located Expr) (Located Expr)
   | EIf (Located Expr) (Located Expr) (Located Expr)
   | ELet (Located String, Located Expr) (Located Expr)
+  | EUnit
 
 
 type PairIndex
@@ -100,6 +101,7 @@ type Comparison
 type Type
   = TyBool
   | TyInt
+  | TyUnit
   | TyPair (Located Type) (Located Type)
   | TyRecord (Dict String (Located String, Located Type))
   | TyFunc (Located Type) (Located Type)
@@ -376,6 +378,7 @@ parseComponent =
   )
   |= oneOf
     [ parseAbstraction
+    , backtrackable parseUnit
     , parseGroupOrPair
     , parseRecord
     , parseIf
@@ -398,6 +401,14 @@ parseComponent =
         |> map (\_ -> Done <| List.reverse revIndices)
       ]
     )
+
+
+parseUnit : LambdaParser (Located Expr)
+parseUnit =
+  located <|
+  succeed EUnit
+    |. symbol (Token "(" ExpectingLeftParen)
+    |. symbol (Token ")" ExpectingRightParen)
 
 
 parseInt : LambdaParser (Located Expr)
@@ -542,6 +553,7 @@ parseType =
     )
     |= oneOf
       [ parseBaseType
+      , backtrackable parseUnitType
       , parseGroupOrPairType
       , parseRecordType
       ]
@@ -561,6 +573,11 @@ parseBaseType =
     [ map (\_ -> TyBool) <| keyword (Token "Bool" ExpectingTyBool)
     , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyBool)
     ]
+
+
+parseUnitType : LambdaParser (Located Type)
+parseUnitType =
+  map (\e -> withLocation e TyUnit) parseUnit
 
 
 parseGroupOrPairType : LambdaParser (Located Type)
@@ -992,6 +1009,9 @@ showExpr expr =
       ++ "\nin"
       ++ "\n" ++ showExpr e2.value
 
+    EUnit ->
+      "()"
+
 
 showPairIndex : PairIndex -> String
 showPairIndex index =
@@ -1033,6 +1053,9 @@ showType t =
 
     TyInt ->
       "Int"
+
+    TyUnit ->
+      "()"
 
     TyPair t1 t2 ->
       "(" ++ showType t1.value ++ ", " ++ showType t2.value ++ ")"

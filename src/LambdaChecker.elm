@@ -158,6 +158,9 @@ checkExpr names expr =
       checkExpr names e1
       ++ checkExpr (Dict.insert label.value label names) e2
 
+    EUnit ->
+      []
+
 
 checkExprBinaryHelper : Dict String (Located String) -> Located Expr -> Located Expr -> List Problem
 checkExprBinaryHelper names left right =
@@ -333,6 +336,9 @@ getType ctx expr =
 
     EInt _ ->
       Ok <| withLocation expr TyInt
+    
+    EUnit ->
+      Ok <| withLocation expr TyUnit
 
 
 getTypeFromEquality : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
@@ -385,6 +391,9 @@ areEqualTypes ty1 ty2 =
       True
 
     (TyInt, TyInt) ->
+      True
+    
+    (TyUnit, TyUnit) ->
       True
 
     (TyPair p1ty1 p1ty2, TyPair p2ty1 p2ty2) ->
@@ -688,6 +697,9 @@ getFreeVariablesHelper boundVariables expr =
       []
     
     EInt _ ->
+      []
+
+    EUnit ->
       []
 
     EPair e1 e2 ->

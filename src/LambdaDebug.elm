@@ -40,6 +40,7 @@ letBinding =
 letBinding2 = let a = 3 in (let b = \\x:Int. x in b) (let c = a * 2 in c)
 letBinding3 = let a = 3 in (let b = \\x:Int. x in b) (let c = 3 in c)
 letBinding4 = let a = 1 in let b = a + 1 in let c = b + 1 in a + b + c
+unit = (\\x:(). ()) ()
 """
   -- """letBinding2 =
   -- let a = 3 in (let b = \\x:Int. x in b) (let c = a * 2 in c)

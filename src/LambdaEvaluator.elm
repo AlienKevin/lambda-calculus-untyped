@@ -72,6 +72,7 @@ type Term
   | TmApplication (Located Term) (Located Term)
   | TmBool Bool
   | TmInt Int
+  | TmUnit
   | TmPair (Located Term) (Located Term)
   | TmPairAccess (Located Term) (Located PairIndex)
   | TmRecord (Dict String (Located String, Located Term))
@@ -178,6 +179,9 @@ termToExpr names t =
 
     TmInt int ->
       EInt int
+    
+    TmUnit ->
+      EUnit
 
 
 termToExprBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
@@ -249,6 +253,9 @@ termToExprDebug names t =
 
     TmInt int ->
       EInt int
+
+    TmUnit ->
+      EUnit
 
 
 termToExprDebugBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
@@ -367,6 +374,9 @@ exprToTerm ctx expr =
 
     EInt int ->
       TmInt int
+    
+    EUnit ->
+      TmUnit
 
 
 exprToTermBinaryHelper : Ctx -> (Located Term -> Located Term -> Term) -> Located Expr -> Located Expr -> Term
@@ -686,6 +696,9 @@ areEqualTerms tm1 tm2 =
     (TmInt i1, TmInt i2) ->
       i1 == i2
     
+    (TmUnit, TmUnit) ->
+      True
+    
     (TmPair p1tm1 p1tm2, TmPair p2tm1 p2tm2) ->
       areEqualTerms p1tm1.value p2tm1.value
       && areEqualTerms p1tm2.value p2tm2.value
@@ -888,6 +901,9 @@ termShift d c t =
 
     TmInt _ ->
       t.value
+    
+    TmUnit ->
+      t.value
 
 
 termShiftBinaryHelper : Int -> Int -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
@@ -962,6 +978,9 @@ termSubst j s t =
       t.value
 
     TmInt _ ->
+      t.value
+    
+    TmUnit ->
       t.value
 
 

@@ -217,6 +217,21 @@ internalParseDefs =
     )
 
 
+parseDValue : LambdaParser Def
+parseDValue =
+  succeed identity
+    |= parseName
+    |. sps
+    |. symbol (Token "=" ExpectingEqual)
+    |> andThen
+    (\name ->
+      indent <|
+      succeed (\expr -> DValue { name = name, expr = expr })
+      |. sps
+      |= internalParseExpr
+    )
+
+
 parseDType : LambdaParser Def
 parseDType =
   succeed
@@ -271,17 +286,7 @@ internalParseDef : LambdaParser Def
 internalParseDef =
   oneOf
     [ parseDType
-    , succeed identity
-      |= parseName
-      |. sps
-      |. symbol (Token "=" ExpectingEqual)
-      |> andThen
-      (\name ->
-        indent <|
-        succeed (\expr -> DValue { name = name, expr = expr })
-        |. sps
-        |= internalParseExpr
-      )
+    , parseDValue
     ]
 
 

@@ -297,8 +297,6 @@ internalParseExpr =
       , subexpr parseCase
       , subexpr parseVariant
       , subexpr parseApplication
-      , subexpr parseBool
-      , subexpr parseInt
       ]
     , andThenOneOf =
       [ Pratt.infixLeft 4 (symbol <| Token "==" <| ExpectingComparison CompEQ)

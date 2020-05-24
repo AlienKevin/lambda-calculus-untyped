@@ -59,7 +59,8 @@ source =
 --   """
   -- "negate = \\a:Int. --2"
   """p1 = Adult (Age 30)
-p2 = quadruplePersonAge p1
+p2 = Teen (Age 15)
+p3 = quadruplePersonAge p2
 -- p2 = (\\p: Person. p) (Person (Age 15))
 -- p3 = (\\p: Adult. p)
 -- p4 = (\\p: Eiowe. p)

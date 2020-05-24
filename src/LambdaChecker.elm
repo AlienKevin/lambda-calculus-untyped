@@ -467,7 +467,11 @@ getType ctx expr =
           getTypeFromEquality ctx expr left right
       
         _ ->
-          getTypeFromBinaryInts ctx expr left right
+          getTypeFromBinaryInts ctx expr left right |>
+          Result.map
+          (\intType ->
+            withLocation intType <| TyBool
+          )
 
     EBool _ ->
       Ok <| withLocation expr TyBool

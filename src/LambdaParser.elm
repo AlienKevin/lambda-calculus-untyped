@@ -1,4 +1,4 @@
-module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, fakeDef, Def, Expr(..), Type(..), Comparison(..), PairIndex(..))
+module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, showCustomType, fakeDef, fakeType, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
 
 
 import Parser.Advanced exposing (..)
@@ -37,6 +37,7 @@ type Problem
   | ExpectingComma
   | ExpectingLeftBrace
   | ExpectingRightBrace
+  | ExpectingVerticalBar
   | ExpectingOne
   | ExpectingTwo
   | ExpectingComparison Comparison
@@ -56,12 +57,21 @@ type Problem
   | ExpectingInt
   | ExpectingLet
   | ExpectingIn
+  | ExpectingType
+  | ExpectingTypeName
+  | ExpectingCase
+  | ExpectingOf
 
 
-type alias Def =
-  { name : Located String
-  , expr : Located Expr
-  }
+type Def
+  = DValue
+    { name : Located String
+    , expr : Located Expr
+    }
+  | DType
+    { name : Located String
+    , variants : Dict String (Located String, Located Type)
+    }
 
 
 type Expr
@@ -82,6 +92,7 @@ type Expr
   | EIf (Located Expr) (Located Expr) (Located Expr)
   | ELet (Located String, Located Expr) (Located Expr)
   | EUnit
+  | ECase (Located Expr) (Dict String (Located String, Located String, Located Expr))
 
 
 type PairIndex
@@ -102,6 +113,8 @@ type Type
   = TyBool
   | TyInt
   | TyUnit
+  | TyName (Located String) (Maybe (Located Type))
+  | TyCustom (Located String) (Dict String (Located String, Located Type))
   | TyPair (Located Type) (Located Type)
   | TyRecord (Dict String (Located String, Located Type))
   | TyFunc (Located Type) (Located Type)
@@ -110,7 +123,7 @@ type Type
 reserved : Set String
 reserved =
   Set.fromList
-    [ "if", "then", "else", "true", "false", "let", "in" ]
+    [ "if", "then", "else", "true", "false", "let", "in", "type", "case", "of" ]
 
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
@@ -147,7 +160,7 @@ parseDefOrExpr exprName src =
         )
       |> andThen
         (\name ->
-          succeed (Def name)
+          succeed (\expr -> { name = name, expr = expr })
           |= ( if isFakeLocated name then
               withIndent 0 internalParseExpr
             else
@@ -158,13 +171,15 @@ parseDefOrExpr exprName src =
       |> andThen
         (\def ->
           succeed
-            { def
-              | name =
-                if isFakeLocated def.name then
-                  withLocation def.expr def.name.value
-                else
-                  def.name
-            }
+            ( DValue
+              { def
+                | name =
+                  if isFakeLocated def.name then
+                    withLocation def.expr def.name.value
+                  else
+                    def.name
+              }
+            )
             |. (
               end <|
               if isFakeLocated def.name then
@@ -202,19 +217,72 @@ internalParseDefs =
     )
 
 
+parseDType : LambdaParser Def
+parseDType =
+  succeed
+  (\name (firstVariant, restVariants) ->
+    DType
+      { name =
+        name
+      , variants =
+        Dict.fromList <|
+        List.map
+        (\variant ->
+          (.value <| Tuple.first variant, variant)
+        )
+        (firstVariant :: restVariants)
+      }
+  )
+  |. keyword (Token "type" ExpectingType)
+  |. sps
+  |= parseTypeName
+  |. sps
+  |. symbol (Token "=" ExpectingEqual)
+  |. sps
+  |= ( indent <|
+    succeed Tuple.pair
+    |= parseTypeVariant
+    |. sps
+    |= ( loop [] <|
+      (\revVariants ->
+        oneOf
+          [ succeed (\variant -> Loop <| variant :: revVariants)
+            |. symbol (Token "|" ExpectingVerticalBar)
+            |. sps
+            |= parseTypeVariant
+            |. sps
+          , succeed ()
+            |> map (\_ -> Done <| List.reverse revVariants)
+          ]
+      )
+    )
+  )
+
+
+parseTypeVariant : LambdaParser ((Located String), (Located Type))
+parseTypeVariant =
+  succeed Tuple.pair
+    |= parseTypeName
+    |. sps
+    |= parseType
+
+
 internalParseDef : LambdaParser Def
 internalParseDef =
-  succeed identity
-    |= parseName
-    |. sps
-    |. symbol (Token "=" ExpectingEqual)
-    |> andThen
-    (\name ->
-      indent <|
-      succeed (Def name)
+  oneOf
+    [ parseDType
+    , succeed identity
+      |= parseName
       |. sps
-      |= internalParseExpr
-    )
+      |. symbol (Token "=" ExpectingEqual)
+      |> andThen
+      (\name ->
+        indent <|
+        succeed (\expr -> DValue { name = name, expr = expr })
+        |. sps
+        |= internalParseExpr
+      )
+    ]
 
 
 internalParseExpr : LambdaParser (Located Expr)
@@ -226,6 +294,8 @@ internalParseExpr =
   Pratt.expression
     { oneOf =
       [ subexpr parseLetBinding
+      , subexpr parseCase
+      , subexpr parseVariant
       , subexpr parseApplication
       , subexpr parseBool
       , subexpr parseInt
@@ -254,6 +324,47 @@ internalParseExpr =
       ]
     , spaces = sps
     }
+
+
+parseVariant : LambdaParser (Located Expr)
+parseVariant =
+  located <|
+  succeed
+  EApplication
+    |= map (\name -> withLocation name <| EVariable name) parseTypeName
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+
+
+parseCase : LambdaParser (Located Expr)
+parseCase =
+  located <|
+  succeed
+    (\expr variants ->
+      ECase expr variants
+    )
+    |. keyword (Token "case" ExpectingCase)
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+    |. sps
+    |. keyword (Token "of" ExpectingOf)
+    |. sps
+    |= loop Dict.empty
+      (\variants ->
+        oneOf
+          [ succeed (\variantName valueName expr -> Loop <| Dict.insert variantName.value (variantName, valueName, expr) variants)
+            |= parseTypeName
+            |. sps
+            |= parseName
+            |. sps
+            |. symbol (Token "->" ExpectingArrow)
+            |. sps
+            |= lazy (\_ -> internalParseExpr)
+            |. sps
+          , succeed ()
+            |> map (\_ -> Done variants)
+          ]
+      )
 
 
 parseApplication : LambdaParser (Located Expr)
@@ -553,6 +664,7 @@ parseType =
     )
     |= oneOf
       [ parseBaseType
+      , parseVariantType
       , backtrackable parseUnitType
       , parseGroupOrPairType
       , parseRecordType
@@ -573,6 +685,16 @@ parseBaseType =
     [ map (\_ -> TyBool) <| keyword (Token "Bool" ExpectingTyBool)
     , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyBool)
     ]
+
+
+parseVariantType : LambdaParser (Located Type)
+parseVariantType =
+  map
+  (\name ->
+    withLocation name <|
+    TyName name Nothing
+  )
+  parseTypeName
 
 
 parseUnitType : LambdaParser (Located Type)
@@ -637,16 +759,11 @@ parseRecordType =
 
 parseVariable : LambdaParser (Located Expr)
 parseVariable =
+  inContext CVariable <|
   map (\var ->
     withLocation var <|
     EVariable var
-  )
-  parseName
-
-
-parseName : LambdaParser (Located String)
-parseName =
-  inContext CVariable <|
+  ) <|
   located <|
   variable
     { start =
@@ -657,6 +774,36 @@ parseName =
       reserved
     , expecting =
       ExpectingVariable
+    }
+
+
+parseName : LambdaParser (Located String)
+parseName =
+  located <|
+  variable
+    { start =
+      Char.isLower
+    , inner =
+      Char.isAlphaNum
+    , reserved =
+      reserved
+    , expecting =
+      ExpectingVariable
+    }
+
+
+parseTypeName : LambdaParser (Located String)
+parseTypeName =
+  located <|
+  variable
+    { start =
+      Char.isUpper
+    , inner =
+      Char.isAlphaNum
+    , reserved =
+      reserved
+    , expecting =
+      ExpectingTypeName
     }
 
 
@@ -801,6 +948,9 @@ showProblem p =
     ExpectingRightBrace ->
       "a '}'"
 
+    ExpectingVerticalBar ->
+      "a '|'"
+
     ExpectingOne ->
       "a '1'"
     
@@ -857,6 +1007,18 @@ showProblem p =
     
     ExpectingIn ->
       "the keyword 'in'"
+
+    ExpectingType ->
+      "the keyword 'type'"
+    
+    ExpectingTypeName ->
+      "a type name"
+    
+    ExpectingCase ->
+      "the keyword 'case'"
+    
+    ExpectingOf ->
+      "the keyword 'of'"
 
 
 showProblemContextStack : List { row : Int, col : Int, context : Context } -> String
@@ -916,8 +1078,13 @@ showDefs defs =
 
 
 showDef : Def -> String
-showDef {name, expr} =
-  name.value ++ " = " ++ showExpr expr.value
+showDef def =
+  case def of
+    DValue { name, expr } ->
+      name.value ++ " = " ++ showExpr expr.value
+    
+    DType { name, variants } ->
+      showCustomType name variants
 
 
 showExpr : Expr -> String
@@ -1011,6 +1178,18 @@ showExpr expr =
 
     EUnit ->
       "()"
+    
+    ECase e variants ->
+      "case " ++ showExpr e.value ++ " of"
+      ++ Dict.foldl
+      (\_ (variantName, valueName, innerExpr) str ->
+        indentStr (
+          "\n" ++ variantName.value ++ " " ++ valueName.value ++ " ->"
+          ++ indentStr ("\n" ++ showExpr innerExpr.value)
+        ) ++ str
+      )
+      ""
+      variants
 
 
 showPairIndex : PairIndex -> String
@@ -1045,6 +1224,19 @@ showComparison comp =
       ">="
 
 
+showCustomType : (Located String) -> (Dict String (Located String, Located Type)) -> String
+showCustomType name variants =
+  "type " ++ name.value
+    ++ "\n  = "
+    ++ ( String.join "\n  | " <|
+      List.map
+      (\(label, (_, ty)) ->
+        label ++ " " ++ showType ty.value
+      )
+      (Dict.toList variants)
+    )
+
+
 showType : Type -> String
 showType t =
   case t of
@@ -1056,6 +1248,12 @@ showType t =
 
     TyUnit ->
       "()"
+
+    TyName name _ ->
+      name.value
+    
+    TyCustom name _ ->
+      name.value
 
     TyPair t1 t2 ->
       "(" ++ showType t1.value ++ ", " ++ showType t2.value ++ ")"
@@ -1109,9 +1307,16 @@ fakeLocatedExpr =
 
 fakeDef : Def
 fakeDef =
-  { name = fakeLocated "IMPOSSIBLE"
-  , expr = fakeLocatedExpr
-  }
+  DValue
+    { name = fakeLocated "IMPOSSIBLE"
+    , expr = fakeLocatedExpr
+    }
+
+
+fakeType : Type
+fakeType =
+  TyName (fakeLocated "IMPOSSIBLE") Nothing
+
 
 optionalWithDefault : a -> LambdaParser a -> LambdaParser a
 optionalWithDefault default parser =

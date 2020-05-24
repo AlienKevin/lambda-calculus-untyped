@@ -1,9 +1,9 @@
-module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, Problem(..))
+module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, getDefName, Problem(..))
 
 
-import LambdaParser exposing (showType, fakeDef, Def, Expr(..), Type(..), Comparison(..), PairIndex(..))
+import LambdaParser exposing (showType, showCustomType, fakeDef, fakeType, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
 import Dict exposing (Dict)
-import Location exposing (showLocation, isFakeLocated, withLocation, Located)
+import Location exposing (showLocation, isFakeLocated, withLocation, fakeLocated, Located)
 import Set exposing (Set)
 import List.Extra
 
@@ -11,7 +11,13 @@ import List.Extra
 type Problem
   = DuplicatedDefinition (Int, Located String) (Int, Located String)
   | UndefinedVariable (Located String)
+  | UndefinedType (Located String)
+  | MisusedVariantAsType (Located String) (Located String)
+  | MisusedTypeAsVariable (Located String) (Located String)
   | TypeError (Located String)
+  | ExpectingVariantsInECase (List (Located String)) (Located Expr)
+  | ExpectingVariantInTyCustom (Located String) ((Located String), (Dict String (Located String, Located Type)))
+  | ExpectingTyCustom (Located Type)
   | ExpectingTyFunc (Located Type)
   | ExpectingTyBool (Located Type)
   | ExpectingTyInt (Located Type)
@@ -35,10 +41,19 @@ checkDefs defs =
 checkDefsNames : List Def -> List Problem
 checkDefsNames defs =
   let
-    allNames =
+    allDeclaredNames =
       List.foldl
         (\def names ->
-          Dict.insert def.name.value def.name names
+          let
+            declaredNames =
+              getAllDeclaredNames def
+          in
+          List.foldl
+            (\name nameDict ->
+              Dict.insert name.value name nameDict
+            )
+            names
+            declaredNames
         )
         Dict.empty
         defs
@@ -46,24 +61,55 @@ checkDefsNames defs =
   Tuple.first <|
   List.Extra.indexedFoldl
     (\index def (problems, names) ->
-      if isFakeLocated def.name then
+      let
+        name =
+          getDefName def
+      in
+      if isFakeLocated name then
         (problems, names)
       else
-        Tuple.mapFirst ((++) <| checkDef (Dict.filter (\_ name -> name /= def.name) allNames) def)
-        ( case Dict.get def.name.value names of
+        Tuple.mapFirst ((++) <| checkDef (Dict.filter (\_ n -> n /= name) allDeclaredNames) def)
+        ( case Dict.get name.value names of
           Nothing ->
             ( problems
-            , Dict.insert def.name.value (index, def.name) names
+            , Dict.insert name.value (index, name) names
             )
 
           Just (previousIndex, previousName) ->
-            ( DuplicatedDefinition (previousIndex, previousName) (index, def.name) :: problems
+            ( DuplicatedDefinition (previousIndex, previousName) (index, name) :: problems
             , names
             )
         )
     )
     ([], Dict.empty)
     defs
+
+
+getDefName : Def -> Located String
+getDefName def =
+  case def of
+    DValue { name } ->
+      name
+    
+    DType { name } ->
+      name
+
+
+getAllDeclaredNames : Def -> List (Located String)
+getAllDeclaredNames def =
+  case def of
+    DValue { name } ->
+      [ name ]
+    
+    DType { name, variants } ->
+      name ::
+      ( Dict.foldl
+        (\_ (label, _) names ->
+          label :: names
+        )
+        []
+        variants
+      )
 
 
 checkDefsTypes : List Def -> List Problem
@@ -75,15 +121,30 @@ checkDefsTypes defs =
   Tuple.first <|
   List.foldl
     (\def (problems, ctx) ->
-      case getType ctx def.expr of
-        Err typeProblem ->
-          ( typeProblem :: problems
-          , ctx
-          )
+      case def of
+        DValue { name, expr } ->
+          case getType ctx expr of
+            Err typeProblem ->
+              ( typeProblem :: problems
+              , ctx
+              )
+            
+            Ok ty ->
+              ( problems
+              , addBinding ctx name.value ty.value
+              )
         
-        Ok ty ->
-          ( problems
-          , addBinding ctx def.name.value ty.value
+        DType { name, variants } ->
+          ( []
+          , Dict.foldl
+            (\_ (label, ty) nextCtx ->
+              addBinding nextCtx label.value (TyFunc ty (withLocation name <| TyCustom name variants))
+            )
+            ctx
+            variants |>
+            (\nextCtx2 ->
+              addBinding nextCtx2 ("$" ++ name.value) (TyCustom name variants)
+            )
           )
     )
     ([], [])
@@ -92,7 +153,32 @@ checkDefsTypes defs =
 
 checkDef : Dict String (Located String) -> Def -> List Problem
 checkDef names def =
-  checkExpr names def.expr
+  case def of
+    DValue { expr } ->
+      checkExpr names expr
+    
+    DType { variants } ->
+      Dict.foldl
+        (\_ (label, ty) problems ->
+          let
+            -- _ = Debug.log "AL -> Dict.keys names" <| Dict.keys names
+            -- _ = Debug.log "AL -> label.value" <| label.value
+            -- _ = Debug.log "AL -> typeNames" <| typeNames
+            typeNames =
+              getFreeTypes ty.value
+          in
+          List.foldl
+          (\name ps ->
+            if List.member name.value (Dict.keys names) then
+              ps
+            else
+              UndefinedType name :: ps
+          )
+          problems
+          typeNames
+        )
+        []
+        variants
 
 
 checkExpr : Dict String (Located String) -> Located Expr -> List Problem
@@ -160,6 +246,15 @@ checkExpr names expr =
 
     EUnit ->
       []
+    
+    ECase e variants ->
+      checkExpr names e
+      ++ Dict.foldl
+        (\_ (_, valueName, innerExpr) problems ->
+          checkExpr (Dict.insert valueName.value valueName names) innerExpr ++ problems
+        )
+        []
+        variants
 
 
 checkExprBinaryHelper : Dict String (Located String) -> Located Expr -> Located Expr -> List Problem
@@ -178,7 +273,15 @@ getType ctx expr =
     EVariable name ->
       case getTypeFromContext ctx name of
         Nothing ->
-          Err <| TypeError name
+          case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
+            Just (TyCustom tyName _) ->
+              Err <| MisusedTypeAsVariable name tyName
+            
+            Just (TyName tyName _) ->
+              Err <| MisusedTypeAsVariable name tyName
+            
+            _ ->
+              Err <| TypeError name
 
         Just ty ->
           Ok <| withLocation expr ty
@@ -187,11 +290,46 @@ getType ctx expr =
       let
         innerCtx =
           addBinding ctx boundVar.value boundType.value
+        -- _ = Debug.log "AL -> boundType" <| boundType.value
+        -- _ = Debug.log "AL -> ctx" <| ctx
       in
+      ( case boundType.value of
+        TyName name _ ->
+          case getTypeFromContext ctx name of
+            Just (TyFunc _ innerType) ->
+              case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
+                Just _ ->
+                  Ok ()
+                
+                Nothing ->
+                  case innerType.value of
+                    TyCustom tyName _ ->
+                      Err <| MisusedVariantAsType name tyName
+                    
+                    _ ->
+                      Ok ()
+            
+            Nothing ->
+              case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
+                Just _ ->
+                  Ok ()
+                
+                Nothing ->
+                  Err <| UndefinedType name
+
+            _ ->
+              Ok ()
+
+        _ ->
+          Ok ()
+      ) |>
+      Result.andThen
+      (\_ ->
       getType innerCtx innerExpr |>
       Result.map
       (\innerType ->
         withLocation expr <| TyFunc boundType innerType
+      )
       )
 
     EApplication e1 e2 ->
@@ -340,6 +478,101 @@ getType ctx expr =
     EUnit ->
       Ok <| withLocation expr TyUnit
 
+    ECase e variants ->
+      getType ctx e |>
+      Result.andThen
+      (\exprType ->
+        case exprType.value of
+          TyCustom tyName tyVariants ->
+            getTypeFromVariants ctx expr tyName tyVariants variants
+
+          TyName name _ ->
+            ( case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
+              Just ty ->
+                Ok <| withLocation e ty
+              
+              _ ->
+                Err <| TypeError name
+            ) |>
+            Result.andThen
+            (\ty ->
+              case ty.value of
+                TyCustom tyName tyVariants ->
+                  getTypeFromVariants ctx expr tyName tyVariants variants
+
+                TyFunc _ innerType ->
+                  case innerType.value of
+                    TyCustom tyName tyVariants ->
+                      getTypeFromVariants ctx expr tyName tyVariants variants
+                    
+                    _ ->
+                      Err <| ExpectingTyCustom exprType
+
+                _ ->
+                  Err <| ExpectingTyCustom exprType
+            )
+          
+          _ ->
+            Err <| ExpectingTyCustom exprType
+      )
+
+
+getTypeFromVariants :
+  Ctx ->
+  Located Expr ->
+  Located String ->
+  Dict String (Located String, Located Type) ->
+  (Dict String (Located String, Located String, Located Expr)) ->
+  Result Problem (Located Type)
+getTypeFromVariants ctx expr customTypeName customTypeVariants variants =
+  Dict.foldl
+    (\_ (variantName, valueName, innerExpr) result ->
+      result |>
+      Result.andThen
+      (\(types, restVariants) ->
+        case Dict.get variantName.value restVariants of
+          Just (_, valueTy) ->
+            getType (addBinding ctx valueName.value valueTy.value) innerExpr |>
+            Result.map
+            (\ty ->
+              ( ty :: types
+              , Dict.remove variantName.value restVariants
+              )
+            )
+              
+          Nothing ->
+            Err <| ExpectingVariantInTyCustom variantName (customTypeName, customTypeVariants)
+      )
+    )
+    (Ok ([], customTypeVariants))
+    variants |>
+    Result.andThen
+    (\(revVariantTypes, restTyVariants) ->
+      let
+        variantTypes =
+          List.reverse revVariantTypes
+      in
+      if Dict.isEmpty restTyVariants then
+        List.foldl
+        (\(prevTy, currTy) result ->
+          result |>
+          Result.andThen
+          (\_ ->
+            if areEqualTypes prevTy.value currTy.value then
+              Ok currTy
+            else
+              Err <| MismatchedType prevTy currTy
+          )
+        )
+        (Ok <| Maybe.withDefault (fakeLocated fakeType) <| List.head variantTypes)
+        <|
+        List.map2
+        Tuple.pair
+        variantTypes (Maybe.withDefault [] <| List.tail variantTypes)
+      else
+        Err <| ExpectingVariantsInECase (List.map (\(_, (label, _)) -> label) <| Dict.toList restTyVariants) expr
+    )
+
 
 getTypeFromEquality : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
 getTypeFromEquality ctx expr left right =
@@ -386,6 +619,10 @@ getTypeFromBinaryInts ctx expr left right =
 
 areEqualTypes : Type -> Type -> Bool
 areEqualTypes ty1 ty2 =
+  -- let
+    -- _ = Debug.log "AL -> ty1" <| ty1
+    -- _ = Debug.log "AL -> ty2" <| ty2
+  -- in
   case (ty1, ty2) of
     (TyBool, TyBool) ->
       True
@@ -395,6 +632,25 @@ areEqualTypes ty1 ty2 =
     
     (TyUnit, TyUnit) ->
       True
+    
+    (TyName n1 n1ty, TyName n2 n2ty) ->
+      n1.value == n2.value
+      || ( case (n1ty, n2ty) of
+        (Just t1, Just t2) ->
+          areEqualTypes t1.value t2.value
+        
+        _ ->
+          False
+        )
+    
+    (TyCustom n1 _, TyCustom n2 _) ->
+      n1.value == n2.value
+    
+    (TyName n1 _, TyCustom n2 _) ->
+      n1.value == n2.value
+    
+    (TyCustom n1 _, TyName n2 _) ->
+      n1.value == n2.value
 
     (TyPair p1ty1 p1ty2, TyPair p2ty1 p2ty2) ->
       areEqualTypes p1ty1.value p2ty1.value
@@ -568,6 +824,57 @@ showProblemWithSingleSourceHelper src problem =
       , showLocation src name
       , "Hint: Try defining `" ++ name.value ++ "` somewhere."
       ]
+    
+    UndefinedType name ->
+      [ "-- UNDEFINED TYPE\n"
+      , "I found an undefined type `" ++ name.value ++ "` here:"
+      , showLocation src name
+      , "Hint: Try defining `" ++ name.value ++ "` somewhere."
+      ]
+
+    MisusedVariantAsType variantName customTypeName ->
+      [ "-- MISUSED VARIANT AS TYPE\n"
+      , "I found a name `" ++ variantName.value ++ "` used as a type here:"
+      , showLocation src variantName
+      , "But `" ++ variantName.value ++ "` is a variant of a custom type declared here:"
+      , showLocation src customTypeName
+      , "Hint: Try changing `" ++ variantName.value ++ "` to `" ++ customTypeName.value ++ "`"
+      ]
+    
+    MisusedTypeAsVariable typeName declaredName ->
+      [ "-- MISUSED TYPE AS VARIABLE\n"
+      , "I found a name `" ++ typeName.value ++ "` used as a variable here:"
+      , showLocation src typeName
+      , "But `" ++ typeName.value ++ "` is a type declared here:"
+      , showLocation src declaredName
+      , "Hint: Try changing the variable name to refer to a value instead of a type."
+      ]
+
+    ExpectingVariantsInECase variants caseExpr ->
+      [ "-- EXPECTING VARIANT IN CASE EXPRESSION\n"
+      , "I'm expecting the variants:"
+      ++ (String.join "\n" <| List.map .value variants)
+      ++ "in the case expression:"
+      ++ showLocation src caseExpr
+      ++ "Hint: Try adding the variants listed above to the case expression."
+      ]
+
+    ExpectingVariantInTyCustom variantName (customTypeName, customTypeVariants) ->
+      [ "-- EXPECTING VARIANT IN CUSTOM TYPE\n"
+      , "I'm expecting a variant `" ++ variantName.value ++ "` in a branch of the case expression here:"
+      , showLocation src variantName
+      , "But the case expression operates on a custom type without this variant:\n"
+      , showCustomType customTypeName customTypeVariants ++ "\n"
+      , "Hint: Try adding the variant to the custom type or removing it in the case expression."
+      ]
+
+    ExpectingTyCustom ty ->
+      [ "-- EXPECTING CUSTOM TYPE\n"
+      , "I'm expecting a custom type here:"
+      , showLocation src ty
+      , "but got " ++ showType ty.value ++ "."
+      , "Hint: Try changing it to a custom type."
+      ]
 
     ExpectingTyFunc ty ->
       [ "-- EXPECTING FUNCTION\n"
@@ -650,74 +957,155 @@ sortDefs defs =
     dependencies =
       List.foldl
       (\def deps ->
-        Dict.insert
-        def.name.value
-        (List.map .value <| getFreeVariables def.expr.value)
-        deps
+        case def of
+          DValue { name, expr } ->
+            Dict.insert
+            name.value
+            (Set.toList <| getFreeVariablesAndTypes expr.value)
+            deps
+          
+          DType { name, variants } ->
+            (\nextDeps ->
+              Dict.foldl
+              (\_ (label, _) resultDeps ->
+                Dict.insert label.value [] resultDeps
+              )
+              nextDeps
+              variants
+            ) <|
+            Dict.insert
+            name.value
+            (List.concat <|
+              List.map (\(_, (_, ty)) -> List.map .value <| getFreeTypes ty.value) <|
+              Dict.toList variants
+            )
+            deps
       )
       Dict.empty
       defs
     
+    -- _ = Debug.log "AL -> dependencies" <| dependencies
+    
     sortedNames =
       sortDependencies dependencies
+    -- _ = Debug.log "AL -> sortedNames" <| sortedNames
   in
+  List.filterMap
+  identity <|
   List.map
   (\name ->
-    Maybe.withDefault fakeDef <| -- impossible
     List.Extra.find
       (\def ->
-        def.name.value == name
+        ( case def of
+          DValue d ->
+            d.name
+          
+          DType d ->
+            d.name
+        ) |>
+        .value |>
+        (==) name
       )
       defs
   )
   sortedNames
 
 
-getFreeVariables : Expr -> List (Located String)
-getFreeVariables expr =
-  getFreeVariablesHelper Set.empty expr
+getFreeTypes : Type -> List (Located String)
+getFreeTypes ty =
+  case ty of
+    TyName label _ ->
+      [ label ]
+    
+    TyCustom name variants ->
+      [ name ]
+      -- ++ Dict.foldl
+      -- (\_ (label, _) labels ->
+      --   label :: labels
+      -- )
+      -- []
+      -- variants
+    
+    TyPair left right ->
+      getFreeTypes left.value
+      ++ getFreeTypes right.value
+    
+    TyRecord r ->
+      Dict.foldl
+        (\_ (_, valueType) types ->
+          getFreeTypes valueType.value ++ types
+        )
+        []
+        r
+
+    TyFunc boundType innerType ->
+      getFreeTypes boundType.value
+      ++ getFreeTypes innerType.value
+    
+    _ ->
+      []
 
 
-getFreeVariablesHelper : Set String -> Expr -> List (Located String)
-getFreeVariablesHelper boundVariables expr =
+getFreeVariablesAndTypes : Expr -> Set String
+getFreeVariablesAndTypes expr =
+  getFreeVariablesAndTypesHelper Set.empty expr
+
+
+getFreeVariablesAndTypesHelper : Set String -> Expr -> Set String
+getFreeVariablesAndTypesHelper boundVariables expr =
   case expr of
     EVariable name ->
       if Set.member name.value boundVariables then
-        []
+        Set.empty
       else
-        [ name ]
+        Set.singleton name.value 
     
-    EAbstraction boundVar _ innerExpr ->
-      getFreeVariablesHelper (Set.insert boundVar.value boundVariables) innerExpr.value
+    EAbstraction boundVar boundType innerExpr ->
+      Set.union
+      ( case boundType.value of
+        TyName label _ ->
+          Set.singleton label.value
+        
+        TyCustom name _ ->
+          Set.singleton name.value
+        
+        _ ->
+          Set.empty
+      )
+      (getFreeVariablesAndTypesHelper (Set.insert boundVar.value boundVariables) innerExpr.value)
     
     EApplication func arg ->
-      getFreeVariablesHelper boundVariables func.value ++ getFreeVariablesHelper boundVariables arg.value
+      Set.union
+      (getFreeVariablesAndTypesHelper boundVariables func.value)
+      (getFreeVariablesAndTypesHelper boundVariables arg.value)
 
     EBool _ ->
-      []
+      Set.empty
     
     EInt _ ->
-      []
+      Set.empty
 
     EUnit ->
-      []
+      Set.empty
 
     EPair e1 e2 ->
       getFreeVariablesBinaryHelper boundVariables e1 e2
 
     EPairAccess pair _ ->
-      getFreeVariablesHelper boundVariables pair.value
+      getFreeVariablesAndTypesHelper boundVariables pair.value
 
     ERecord r ->
       Dict.foldl
         (\_ (_, value) freeVars ->
-          getFreeVariablesHelper boundVariables value.value ++ freeVars
+          Set.union
+          (getFreeVariablesAndTypesHelper boundVariables value.value)
+          freeVars
         )
-        []
+        Set.empty
         r
 
     ERecordAccess record _ ->
-      getFreeVariablesHelper boundVariables record.value
+      getFreeVariablesAndTypesHelper boundVariables record.value
 
     EAdd left right ->
       getFreeVariablesBinaryHelper boundVariables left right
@@ -735,19 +1123,40 @@ getFreeVariablesHelper boundVariables expr =
       getFreeVariablesBinaryHelper boundVariables left right
 
     EIf condition thenBranch elseBranch ->
-      getFreeVariablesHelper boundVariables condition.value
-      ++ getFreeVariablesHelper boundVariables thenBranch.value
-      ++ getFreeVariablesHelper boundVariables elseBranch.value
+      Set.union
+      (getFreeVariablesAndTypesHelper boundVariables condition.value)
+      ( Set.union
+        (getFreeVariablesAndTypesHelper boundVariables thenBranch.value)
+        (getFreeVariablesAndTypesHelper boundVariables elseBranch.value)
+      )
 
     ELet (label, e1) e2 ->
-      getFreeVariablesHelper boundVariables e1.value
-      ++ getFreeVariablesHelper (Set.insert label.value boundVariables) e2.value
+      Set.union
+      (getFreeVariablesAndTypesHelper boundVariables e1.value)
+      (getFreeVariablesAndTypesHelper (Set.insert label.value boundVariables) e2.value)
+  
+    ECase e variants ->
+      Set.union
+      (getFreeVariablesAndTypesHelper boundVariables e.value)
+      ( Dict.foldl
+        (\_ (_, valueName, innerExpr) set ->
+          Set.union
+          ( getFreeVariablesAndTypesHelper
+            (Set.insert valueName.value boundVariables)
+            innerExpr.value
+          )
+          set
+        )
+        Set.empty
+        variants
+      )
 
 
-getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> List (Located String)
+getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> Set String
 getFreeVariablesBinaryHelper boundVariables left right =
-  getFreeVariablesHelper boundVariables left.value
-  ++ getFreeVariablesHelper boundVariables right.value
+  Set.union
+  (getFreeVariablesAndTypesHelper boundVariables left.value)
+  (getFreeVariablesAndTypesHelper boundVariables right.value)
 
 
 type alias Dependencies =

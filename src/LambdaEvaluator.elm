@@ -2,8 +2,8 @@ module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
 import Dict exposing (Dict)
-import LambdaParser exposing (showExpr, fakeDef, Def, Expr(..), Type, Comparison(..), PairIndex(..))
-import LambdaChecker exposing (sortDefs)
+import LambdaParser exposing (showExpr, fakeDef, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
+import LambdaChecker exposing (sortDefs, getDefName)
 import Location exposing (withLocation, fakeLocated, Located)
 import List.Extra
 
@@ -27,17 +27,45 @@ evalDefs strategy defs =
           let
             resultDef =
               internalEvalDef strategy ctx def
-          in  
-          ( Dict.insert resultDef.name.value resultDef resultDefs
-          , Dict.insert def.name.value (exprToTerm ctx resultDef.expr) ctx
-          )
+            -- _ = Debug.log "AL -> ctx" <| ctx
+          in
+          case resultDef of
+            DValue { name, expr } ->
+              ( Dict.insert name.value resultDef resultDefs
+              , Dict.insert name.value (exprToTerm ctx expr) ctx
+              )
+            
+            DType { name, variants } ->
+              ( Dict.insert name.value resultDef resultDefs
+              , Dict.foldl
+                (\_ (label, ty) nextCtx ->
+                  let
+                    _ = Debug.log "AL -> label" <| label
+                  in
+                  ( withLocation label <|
+                    TmAbstraction
+                    (withLocation ty <| "$variant")
+                    ty
+                    (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
+                  ) |>
+                  (\tm ->
+                    Dict.insert label.value tm nextCtx
+                  )
+                )
+                ctx
+                variants
+              )
         )
         (Dict.empty, Dict.empty)
         sortedDefs
   in
   -- return in the original order, not in the dependency order
   List.map
-    (\{ name } ->
+    (\def ->
+      let
+        name =
+          getDefName def
+      in
       Maybe.withDefault fakeDef <| -- impossible
       Dict.get name.value resultSortedDefs
     )
@@ -50,7 +78,25 @@ evalDef strategy otherDefs def =
     resultCtx =
       List.foldl
         (\otherDef ctx ->
-          Dict.insert otherDef.name.value (exprToTerm ctx otherDef.expr) ctx
+          case otherDef of
+            DValue { name, expr } ->
+              Dict.insert name.value (exprToTerm ctx expr) ctx
+            
+            DType { name, variants } ->
+              Dict.foldl
+                (\_ (label, ty) nextCtx ->
+                  ( withLocation label <|
+                    TmAbstraction
+                    (withLocation ty <| "x")
+                    (withLocation name <| TyName name Nothing)
+                    (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
+                  ) |>
+                  (\tm ->
+                    Dict.insert name.value tm nextCtx
+                  )
+                )
+                ctx
+                variants
         )
         Dict.empty
         otherDefs
@@ -60,16 +106,24 @@ evalDef strategy otherDefs def =
 
 internalEvalDef : EvalStrategy -> Ctx -> Def -> Def
 internalEvalDef strategy ctx def =
-  { def
-    | expr =
-      evalExpr strategy ctx def.expr
-  }
+  case def of
+    DValue { name, expr } ->
+      DValue
+        { name =
+          name
+        , expr =
+          evalExpr strategy ctx expr
+        }
+    
+    _ ->
+      def
 
 
 type Term
   = TmVariable Int
   | TmAbstraction (Located String) (Located Type) (Located Term)
   | TmApplication (Located Term) (Located Term)
+  | TmVariant (Located String) (Located Term)
   | TmBool Bool
   | TmInt Int
   | TmUnit
@@ -84,6 +138,7 @@ type Term
   | TmDivision (Located Term) (Located Term)
   | TmComparison Comparison (Located Term) (Located Term)
   | TmLet (Located String, Located Term) (Located Term)
+  | TmCase (Located Term) (Dict String (Located String, Located String, Located Term))
 
 
 type alias Ctx =
@@ -116,11 +171,19 @@ termToExpr names t =
       EVariable <| withLocation t <| Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
     
     TmAbstraction boundVar boundType t1 ->
-      let
-        (newNames, newName) =
-          pickNewName names boundVar.value
-      in
-      EAbstraction (withLocation boundVar newName) boundType <| termToExpr newNames t1
+      if boundVar.value == "$variant" then
+        case t1.value of
+          TmVariant variantName _ ->
+            EVariable variantName
+          
+          _ ->
+            EVariable (fakeLocated "IMPOSSIBLE")
+      else
+        let
+          (newNames, newBoundVar) =
+            pickNewName names boundVar
+        in
+        EAbstraction newBoundVar boundType <| termToExpr newNames t1
   
     TmApplication t1 t2 ->
       EApplication (termToExpr names t1) (termToExpr names t2)
@@ -135,12 +198,31 @@ termToExpr names t =
       let
         _ = Debug.log "AL -> label" <| label.value
         _ = Debug.log "AL -> newNames" <| newNames
-        (newNames, newName) =
-          pickNewName names label.value
+        (newNames, newLabel) =
+          pickNewName names label
       in
       ELet
-      (withLocation label newName, termToExpr names tm1)
+      (newLabel, termToExpr names tm1)
       (termToExpr newNames tm2)
+
+    TmCase e variants ->
+      ECase
+      (termToExpr names e)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          let
+            (newNames, newValueName) =
+              pickNewName names valueName
+          in
+          (variantName, newValueName, termToExpr newNames innerTerm)
+        )
+        variants
+      )
+
+    TmVariant variantName value ->
+      EApplication
+      (withLocation variantName <| EVariable variantName)
+      (termToExpr names value)
 
     TmPair t1 t2 ->
       termToExprBinaryHelper names EPair t1 t2
@@ -216,6 +298,25 @@ termToExprDebug names t =
       (label, termToExprDebug names tm1)
       (termToExprDebug names tm2)
 
+    TmCase e variants ->
+      ECase
+      (termToExprDebug names e)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          let
+            (newNames, newValueName) =
+              pickNewName names valueName
+          in
+          (variantName, newValueName, termToExprDebug newNames innerTerm)
+        )
+        variants
+      )
+
+    TmVariant variantName value ->
+      EApplication
+      (withLocation variantName <| EVariable variantName)
+      (termToExprDebug names value)
+
     TmPair t1 t2 ->
       termToExprDebugBinaryHelper names EPair t1 t2
     
@@ -270,17 +371,17 @@ showTermDebug tm =
   showExpr <| .value <| termToExprDebug [] <| fakeLocated tm
 
 
-pickNewName : List String -> String -> (List String, String)
+pickNewName : List String -> Located String -> (List String, Located String)
 pickNewName names boundVar =
   let
     newName =
-      if List.member boundVar names then
-        boundVar ++ (String.fromInt <| List.length names)
+      if List.member boundVar.value names then
+        boundVar.value ++ (String.fromInt <| List.length names)
       else
-        boundVar  
+        boundVar.value
   in
   ( newName :: names
-  , newName
+  , withLocation boundVar newName
   )
 
 
@@ -332,6 +433,22 @@ exprToTerm ctx expr =
       TmLet
       (label, exprToTerm ctx e1)
       (exprToTerm innerCtx e2)
+
+    ECase e variants ->
+      TmCase
+      (exprToTerm ctx e)
+      ( Dict.map
+        (\_ (variantName, valueName, innerExpr) ->
+          let
+            innerCtx =
+              ctx |>
+              Dict.map (\_ s -> termShift 1 0 s) |>
+              Dict.insert valueName.value (withLocation valueName <| TmVariable 0)
+          in
+          (variantName, valueName, exprToTerm innerCtx innerExpr)
+        )
+        variants
+      )
 
     EPair e1 e2 ->
       exprToTermBinaryHelper ctx TmPair e1 e2
@@ -546,13 +663,13 @@ commonEval f ctx tm =
           )
 
     TmLet (label, tm1) tm2 ->
-      let
-        _ = Debug.log "AL -> tm1" <| tm1.value
-        _ = Debug.log "AL -> termShift 1 0 tm1" <| termShift 1 0 tm1
-        _ = Debug.log "AL -> (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| (termSubst 0 (termShift 1 0 tm1) tm2).value
-        _ = Debug.log "AL -> termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| .value <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
-        _ = Debug.log "AL -> tm2" <| showTermDebug tm2.value
-      in
+      -- let
+        -- _ = Debug.log "AL -> tm1" <| tm1.value
+        -- _ = Debug.log "AL -> termShift 1 0 tm1" <| termShift 1 0 tm1
+        -- _ = Debug.log "AL -> (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| (termSubst 0 (termShift 1 0 tm1) tm2).value
+        -- _ = Debug.log "AL -> termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| .value <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
+        -- _ = Debug.log "AL -> tm2" <| showTermDebug tm2.value
+      -- in
       if isValue tm1 then
         -- Ok <| termSubst 0 tm1 tm2
         Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
@@ -562,6 +679,38 @@ commonEval f ctx tm =
         (\newTm1 ->
           withLocation tm <| TmLet (label, newTm1) tm2
         )
+
+    TmCase tm1 variants ->
+      case tm1.value of
+        TmVariant variantName value ->
+          if isValue value then
+            case Dict.get variantName.value variants of
+              Just (_, _, tm2) ->
+                Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 value) tm2)
+              
+              Nothing ->
+                Err ()
+          else
+            f ctx tm1 |>
+            Result.map
+            (\newTm1 ->
+              withLocation tm <| TmCase newTm1 variants
+            )
+        
+        _ ->
+          f ctx tm1 |>
+          Result.map
+          (\newTm1 ->
+            withLocation tm <| TmCase newTm1 variants
+          )
+    
+    TmVariant variantName value ->
+      f ctx value |>
+      Result.map
+      (\newValue ->
+        withLocation tm <| TmVariant variantName newValue
+      )
+
 
     TmAdd left right ->
       commonEvalBinaryIntsHelper f ctx tm TmAdd (+) left right
@@ -720,6 +869,10 @@ areEqualTerms tm1 tm2 =
       else
         False
     
+    (TmVariant n1 v1, TmVariant n2 v2) ->
+      (n1.value == n2.value)
+      && areEqualTerms v1.value v2.value
+    
     _ ->
       False
 
@@ -832,6 +985,9 @@ isValue t =
         isValue value
       )
       (Dict.toList r)
+
+    TmVariant _ value ->
+      isValue value
     
     _ ->
       False
@@ -863,6 +1019,21 @@ termShift d c t =
       TmLet
       (label, termShift d c tm1)
       (termShift d (c + 1) tm2)
+    
+    TmCase tm variants ->
+      TmCase
+      (termShift d c tm)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          (variantName, valueName, termShift d (c + 1) innerTerm)
+        )
+        variants
+      )
+    
+    TmVariant variantName value ->
+      TmVariant
+      variantName
+      (termShift d c value)
 
     TmPair t1 t2 ->
       termShiftBinaryHelper d c TmPair t1 t2
@@ -941,6 +1112,21 @@ termSubst j s t =
       TmLet
       (label, termSubst j s tm1)
       (termSubst (j + 1) (termShift 1 0 s) tm2)
+    
+    TmCase tm variants ->
+      TmCase
+      (termSubst j s tm)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          (variantName, valueName, termSubst (j + 1) (termShift 1 0 s) innerTerm)
+        )
+        variants
+      )
+    
+    TmVariant variantName value ->
+      TmVariant
+      variantName
+      (termSubst j s value)
     
     TmAdd left right ->
       termSubstBinaryHelper j s TmAdd left right

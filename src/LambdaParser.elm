@@ -1170,20 +1170,25 @@ showExpr expr =
       name.value
     
     EApplication e1 e2 ->
-      ( case e1.value of
-        EAbstraction _ _ _ ->
+      ( if needsWrapping e1.value
+        && ( case e1.value of
+          EApplication _ _ ->
+            False
+          
+          _ ->
+            True
+        ) then
           "(" ++ showExpr e1.value ++ ")"
-        
-        _ ->
+        else
           showExpr e1.value
       )
       ++ " "
-      ++ case e2.value of
-        EVariable _ ->
-          showExpr e2.value      
-        
-        _ ->
+      ++ ( if needsWrapping e2.value
+        then
           "(" ++ showExpr e2.value ++ ")"
+        else
+          showExpr e2.value
+      )
     
     EAbstraction boundVar boundType innerExpr ->
       "\\" ++ boundVar.value ++ ":" ++ showType boundType.value ++ ". " ++ showExpr innerExpr.value
@@ -1224,24 +1229,25 @@ showExpr expr =
       "(" ++ showExpr r.value ++ ")." ++ label.value
 
     EAdd left right ->
-      "(" ++ showExpr left.value ++ " + " ++ showExpr right.value ++ ")"
+      showExprWrapped expr left ++ " + " ++ showExprWrapped expr right
 
     ESubtract left right ->
-      "(" ++ showExpr left.value ++ " - " ++ showExpr right.value ++ ")"
+      showExprWrapped expr left ++ " - " ++ showExprWrapped expr right
 
     EMultiplication left right ->
-      "(" ++ showExpr left.value ++ " * " ++ showExpr right.value ++ ")"
+      showExprWrapped expr left ++ " * " ++ showExprWrapped expr right
 
     EDivision left right ->
-      "(" ++ showExpr left.value ++ " / " ++ showExpr right.value ++ ")"
+      showExprWrapped expr left ++ " / " ++ showExprWrapped expr right
 
     EComparison comp left right ->
-      "(" ++ showExpr left.value ++ " " ++ showComparison comp ++ " " ++ showExpr right.value ++ ")"
+      showExprWrapped expr left ++ " " ++ showComparison comp ++ " " ++ showExprWrapped expr right
     
     EIf condition thenBranch elseBranch ->
-      "if " ++ showExpr condition.value
-      ++ " then " ++ showExpr thenBranch.value
-      ++ " else " ++ showExpr elseBranch.value
+      "if " ++ showExpr condition.value ++ " then"
+      ++ indentStr ( "\n" ++ showExpr thenBranch.value )
+      ++ "\nelse"
+      ++ indentStr ( "\n" ++ showExpr elseBranch.value)
 
     ELet (label, e1) e2 ->
       indentStr <|
@@ -1269,6 +1275,75 @@ showExpr expr =
 
     EChar c ->
       "'" ++ String.fromChar c ++ "'"
+
+
+showExprWrapped : Expr -> Located Expr -> String
+showExprWrapped expr subExpr =
+  if needsWrapping subExpr.value
+  && (
+    getOperatorPrecedence expr
+    > getOperatorPrecedence subExpr.value
+  )
+  then
+    "(" ++ showExpr subExpr.value ++ ")"
+  else
+    showExpr subExpr.value
+
+
+getOperatorPrecedence : Expr -> Int
+getOperatorPrecedence expr =
+  case expr of
+    EMultiplication _ _ ->
+      7
+    
+    EDivision _ _ ->
+      7
+    
+    EAdd _ _ ->
+      6
+    
+    ESubtract _ _ ->
+      6
+    
+    EComparison _ _ _ ->
+      4
+    
+    _ ->
+      0
+
+
+needsWrapping : Expr -> Bool
+needsWrapping e =
+  case e of
+    EVariable _ ->
+      False
+    
+    EBool _ ->
+      False
+    
+    EInt _ ->
+      False
+    
+    EChar _ ->
+      False
+    
+    EUnit ->
+      False
+    
+    EPair _ _ ->
+      False
+    
+    EPairAccess _ _ ->
+      False
+
+    ERecord _ ->
+      False
+    
+    ERecordAccess _ _ ->
+      False
+    
+    _ ->
+      True
 
 
 showPairIndex : PairIndex -> String

@@ -55,6 +55,11 @@ evalDefs strategy defs =
                 ctx
                 variants
               )
+            
+            DAlias { name, ty } ->
+              ( Dict.insert name.value resultDef resultDefs
+              , ctx
+              )
         )
         (Dict.empty, Dict.empty)
         sortedDefs
@@ -87,7 +92,7 @@ evalDef strategy otherDefs def =
                 (\_ (label, ty) nextCtx ->
                   ( withLocation label <|
                     TmAbstraction
-                    (withLocation ty <| "x")
+                    (withLocation ty <| "$variant")
                     (withLocation name <| TyName name Nothing)
                     (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
                   ) |>
@@ -97,6 +102,9 @@ evalDef strategy otherDefs def =
                 )
                 ctx
                 variants
+            
+            DAlias { name, ty } ->
+              ctx
         )
         Dict.empty
         otherDefs

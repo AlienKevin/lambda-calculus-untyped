@@ -59,6 +59,7 @@ type Problem
   | ExpectingIn
   | ExpectingType
   | ExpectingTypeName
+  | ExpectingAlias
   | ExpectingCase
   | ExpectingOf
 
@@ -71,6 +72,10 @@ type Def
   | DType
     { name : Located String
     , variants : Dict String (Located String, Located Type)
+    }
+  | DAlias
+    { name : Located String
+    , ty : Located Type
     }
 
 
@@ -123,7 +128,7 @@ type Type
 reserved : Set String
 reserved =
   Set.fromList
-    [ "if", "then", "else", "true", "false", "let", "in", "type", "case", "of" ]
+    [ "if", "then", "else", "true", "false", "let", "in", "type", "alias", "case", "of" ]
 
 
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
@@ -232,6 +237,28 @@ parseDValue =
     )
 
 
+parseDAlias : LambdaParser Def
+parseDAlias =
+  succeed
+    (\name ty ->
+      DAlias
+        { name =
+          name
+        , ty =
+          ty
+        }
+    )
+    |. keyword (Token "type" ExpectingType)
+    |. sps
+    |. keyword (Token "alias" ExpectingAlias)
+    |. sps
+    |= parseTypeName
+    |. sps
+    |. symbol (Token "=" ExpectingEqual)
+    |. sps
+    |= parseType
+
+
 parseDType : LambdaParser Def
 parseDType =
   succeed
@@ -285,7 +312,8 @@ parseTypeVariant =
 internalParseDef : LambdaParser Def
 internalParseDef =
   oneOf
-    [ parseDType
+    [ backtrackable parseDAlias
+    , parseDType
     , parseDValue
     ]
 
@@ -1017,6 +1045,9 @@ showProblem p =
     ExpectingTypeName ->
       "a type name"
     
+    ExpectingAlias ->
+      "the keyword 'alias'"
+    
     ExpectingCase ->
       "the keyword 'case'"
     
@@ -1088,6 +1119,10 @@ showDef def =
     
     DType { name, variants } ->
       showCustomType name variants
+    
+    DAlias { name, ty } ->
+      "type alias " ++ name.value ++ " ="
+      ++ (indentStr <| "\n" ++ showType ty.value)
 
 
 showExpr : Expr -> String

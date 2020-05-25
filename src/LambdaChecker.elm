@@ -93,6 +93,9 @@ getDefName def =
     
     DType { name } ->
       name
+    
+    DAlias { name } ->
+      name
 
 
 getAllDeclaredNames : Def -> List (Located String)
@@ -110,6 +113,10 @@ getAllDeclaredNames def =
         []
         variants
       )
+    
+    DAlias { name, ty } ->
+      name ::
+      getFreeTypes ty.value
 
 
 checkDefsTypes : List Def -> List Problem
@@ -146,6 +153,11 @@ checkDefsTypes defs =
               addBinding nextCtx2 ("$" ++ name.value) (TyCustom name variants)
             )
           )
+        
+        DAlias { name, ty } ->
+          ( []
+          , addBinding ctx name.value ty.value
+          )
     )
     ([], [])
     sortedDefs
@@ -159,26 +171,31 @@ checkDef names def =
     
     DType { variants } ->
       Dict.foldl
-        (\_ (label, ty) problems ->
-          let
-            -- _ = Debug.log "AL -> Dict.keys names" <| Dict.keys names
-            -- _ = Debug.log "AL -> label.value" <| label.value
-            -- _ = Debug.log "AL -> typeNames" <| typeNames
-            typeNames =
-              getFreeTypes ty.value
-          in
-          List.foldl
-          (\name ps ->
-            if List.member name.value (Dict.keys names) then
-              ps
-            else
-              UndefinedType name :: ps
-          )
-          problems
-          typeNames
+        (\_ (_, ty) problems ->
+          checkFreeTypes names ty ++ problems
         )
         []
         variants
+    
+    DAlias { ty } ->
+      checkFreeTypes names ty
+
+
+checkFreeTypes : Dict String (Located String) -> Located Type -> List Problem
+checkFreeTypes names ty =
+  let
+    typeNames =
+      getFreeTypes ty.value
+  in
+  List.foldl
+  (\name ps ->
+    if List.member name.value (Dict.keys names) then
+      ps
+    else
+      UndefinedType name :: ps
+  )
+  []
+  typeNames
 
 
 checkExpr : Dict String (Located String) -> Located Expr -> List Problem
@@ -299,7 +316,7 @@ getType ctx expr =
             Just (TyFunc _ innerType) ->
               case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
                 Just _ ->
-                  Ok ()
+                  Ok (boundType, innerCtx)
                 
                 Nothing ->
                   case innerType.value of
@@ -307,28 +324,35 @@ getType ctx expr =
                       Err <| MisusedVariantAsType name tyName
                     
                     _ ->
-                      Ok ()
+                      Ok (boundType, innerCtx)
+            
+            Just ty ->
+              -- let
+              --   _ = Debug.log "AL -> updateBinding innerCtx name.value ty" <| updateBinding innerCtx boundVar.value ty    
+              -- in
+              Ok (withLocation boundType ty, updateBinding innerCtx boundVar.value ty)
             
             Nothing ->
               case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
                 Just _ ->
-                  Ok ()
+                  Ok (boundType, innerCtx)
                 
                 Nothing ->
                   Err <| UndefinedType name
 
-            _ ->
-              Ok ()
-
         _ ->
-          Ok ()
+          Ok (boundType, innerCtx)
       ) |>
       Result.andThen
-      (\_ ->
-      getType innerCtx innerExpr |>
+      (\(nextBoundType, nextInnerCtx) ->
+      -- let
+      --   _ = Debug.log "AL -> innerExpr" <| innerExpr
+      --   _ = Debug.log "AL -> getType nextInnerCtx innerExpr" <| getType nextInnerCtx innerExpr
+      -- in
+      getType nextInnerCtx innerExpr |>
       Result.map
       (\innerType ->
-        withLocation expr <| TyFunc boundType innerType
+        withLocation expr <| TyFunc nextBoundType innerType
       )
       )
 
@@ -734,6 +758,16 @@ addBinding ctx name ty =
   (name, ty) :: ctx
 
 
+updateBinding : Ctx -> String -> Type -> Ctx
+updateBinding ctx name ty =
+  case List.Extra.findIndex (\(n, _) -> n == name) ctx of
+    Just index ->
+      List.Extra.updateAt index (\_ -> (name, ty)) ctx
+    
+    Nothing ->
+      ctx
+
+
 getTypeFromContext : Ctx -> Located String -> Maybe Type
 getTypeFromContext ctx name =
   Maybe.map Tuple.second <|
@@ -984,6 +1018,12 @@ sortDefs defs =
               Dict.toList variants
             )
             deps
+          
+          DAlias { name, ty } ->
+            Dict.insert
+            name.value
+            (List.map .value <| getFreeTypes ty.value)
+            deps
       )
       Dict.empty
       defs
@@ -1000,15 +1040,7 @@ sortDefs defs =
   (\name ->
     List.Extra.find
       (\def ->
-        ( case def of
-          DValue d ->
-            d.name
-          
-          DType d ->
-            d.name
-        ) |>
-        .value |>
-        (==) name
+        (getDefName def).value == name
       )
       defs
   )

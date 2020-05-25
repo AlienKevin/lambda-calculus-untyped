@@ -58,50 +58,68 @@ source =
 --   double (double b)
 --   """
   -- "negate = \\a:Int. --2"
-  """p1 = Adult (Age 30)
-p2 = Teen (Age 15)
-p3 = quadruplePersonAge p2
--- p2 = (\\p: Person. p) (Person (Age 15))
--- p3 = (\\p: Adult. p)
--- p4 = (\\p: Eiowe. p)
+--   """p1 = Adult (Age 30)
+-- p2 = Teen (Age 15)
+-- p3 = quadruplePersonAge p2
+-- -- p2 = (\\p: Person. p) (Person (Age 15))
+-- -- p3 = (\\p: Adult. p)
+-- -- p4 = (\\p: Eiowe. p)
 
-a1 = Age 1
-a2 = doubleAge a1
+-- a1 = Age 1
+-- a2 = doubleAge a1
 
-doubleAge = \\a: Age.
-  case a of
-    Age a ->
-      Age (a * 2)
-
-
-isAdultAge = \\a: Age.
-  case a of
-    Age a ->
-      a >= 18
+-- doubleAge = \\a: Age.
+--   case a of
+--     Age a ->
+--       Age (a * 2)
 
 
-quadruplePersonAge = \\p:Person.
-  case p of
-    Adult age ->
-      Adult (doubleAge (doubleAge age))
+-- isAdultAge = \\a: Age.
+--   case a of
+--     Age a ->
+--       a >= 18
+
+
+-- quadruplePersonAge = \\p:Person.
+--   case p of
+--     Adult age ->
+--       Adult (doubleAge (doubleAge age))
     
-    Teen age ->
-      let
-        newAge =
-          doubleAge (doubleAge age)
-      in
-      if isAdultAge newAge then
-        Adult newAge
-      else
-        Teen newAge
+--     Teen age ->
+--       let
+--         newAge =
+--           doubleAge (doubleAge age)
+--       in
+--       if isAdultAge newAge then
+--         Adult newAge
+--       else
+--         Teen newAge
 
 
-type Person
-  = Adult Age
-  | Teen Age
+-- type Person
+--   = Adult Age
+--   | Teen Age
 
-type Age =
-  Age Int
+-- type Age =
+--   Age Int
+--   """
+
+  """type alias Position =
+  (Int, Int)
+p1 = (\\p:Position. p) (0, 1)
+p2 = (2, 5)
+squaredDistance = \\p1:Position. \\p2:Position.
+  let
+    dx =
+      p2.1 - p1.1
+  in
+  let
+    dy =
+      p2.2 - p1.2
+  in
+  dx * dx + dy * dy
+
+d1 = squaredDistance p1 p2
   """
 
 main =
@@ -128,7 +146,7 @@ main =
               -- Html.text "✔ Passsed check!"
               let
                 resultDefs =
-                  LambdaEvaluator.evalDefs LambdaEvaluator.FullEvaluation defs
+                  LambdaEvaluator.evalDefs LambdaEvaluator.CallByValue defs
               in
               Html.div []
               [ Html.h1 [] [ Html.text "Evaluation result:" ]

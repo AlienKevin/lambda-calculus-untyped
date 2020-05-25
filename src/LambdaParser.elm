@@ -49,6 +49,7 @@ type Problem
   | ExpectingEndOfDefinition
   | ExpectingEndOfExpression
   | ExpectingTyBool
+  | ExpectingTyInt
   | ExpectingIf
   | ExpectingThen
   | ExpectingElse
@@ -714,7 +715,7 @@ parseBaseType =
   located <|
   oneOf
     [ map (\_ -> TyBool) <| keyword (Token "Bool" ExpectingTyBool)
-    , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyBool)
+    , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyInt)
     ]
 
 
@@ -1014,6 +1015,9 @@ showProblem p =
 
     ExpectingTyBool ->
       "a type 'Bool'"
+
+    ExpectingTyInt ->
+      "a type 'Int'"
 
     ExpectingIf ->
       "a 'if'"

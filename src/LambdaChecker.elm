@@ -621,7 +621,7 @@ getTypeFromEquality ctx expr left right =
             TyFunc _ _ ->
               Err <| CompareTyFunc leftType rightType
             _ ->
-              Ok <| withLocation expr TyInt
+              Ok <| withLocation expr TyBool
         else
           Err <| MismatchedType leftType rightType
       )

@@ -134,6 +134,7 @@ type Term
   | TmVariant (Located String) (Located Term)
   | TmBool Bool
   | TmInt Int
+  | TmChar Char
   | TmUnit
   | TmPair (Located Term) (Located Term)
   | TmPairAccess (Located Term) (Located PairIndex)
@@ -270,6 +271,9 @@ termToExpr names t =
     TmInt int ->
       EInt int
     
+    TmChar char ->
+      EChar char
+    
     TmUnit ->
       EUnit
 
@@ -362,6 +366,9 @@ termToExprDebug names t =
 
     TmInt int ->
       EInt int
+    
+    TmChar char ->
+      EChar char
 
     TmUnit ->
       EUnit
@@ -499,6 +506,9 @@ exprToTerm ctx expr =
 
     EInt int ->
       TmInt int
+    
+    EChar char ->
+      TmChar char
     
     EUnit ->
       TmUnit
@@ -853,6 +863,9 @@ areEqualTerms tm1 tm2 =
     (TmInt i1, TmInt i2) ->
       i1 == i2
     
+    (TmChar c1, TmChar c2) ->
+      c1 == c2
+    
     (TmUnit, TmUnit) ->
       True
     
@@ -984,6 +997,12 @@ isValue t =
     TmInt _ ->
       True
     
+    TmChar _ ->
+      True
+    
+    TmUnit ->
+      True
+    
     TmPair tm1 tm2 ->
       isValue tm1 && isValue tm2
 
@@ -1081,6 +1100,9 @@ termShift d c t =
     TmInt _ ->
       t.value
     
+    TmChar _ ->
+      t.value
+    
     TmUnit ->
       t.value
 
@@ -1172,6 +1194,9 @@ termSubst j s t =
       t.value
 
     TmInt _ ->
+      t.value
+    
+    TmChar _ ->
       t.value
     
     TmUnit ->

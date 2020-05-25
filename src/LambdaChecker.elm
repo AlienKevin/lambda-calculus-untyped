@@ -219,6 +219,9 @@ checkExpr names expr =
 
     EInt _ ->
       []
+    
+    EChar _ ->
+      []
 
     EPair e1 e2 ->
       checkExprBinaryHelper names e1 e2
@@ -502,6 +505,9 @@ getType ctx expr =
 
     EInt _ ->
       Ok <| withLocation expr TyInt
+
+    EChar _ ->
+      Ok <| withLocation expr TyChar
     
     EUnit ->
       Ok <| withLocation expr TyUnit
@@ -656,6 +662,9 @@ areEqualTypes ty1 ty2 =
       True
 
     (TyInt, TyInt) ->
+      True
+    
+    (TyChar, TyChar) ->
       True
     
     (TyUnit, TyUnit) ->
@@ -1119,6 +1128,9 @@ getFreeVariablesAndTypesHelper boundVariables expr =
       Set.empty
     
     EInt _ ->
+      Set.empty
+
+    EChar _ ->
       Set.empty
 
     EUnit ->

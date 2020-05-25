@@ -38,6 +38,8 @@ type Problem
   | ExpectingLeftBrace
   | ExpectingRightBrace
   | ExpectingVerticalBar
+  | ExpectingSingleQuote
+  | ExpectingChar
   | ExpectingOne
   | ExpectingTwo
   | ExpectingComparison Comparison
@@ -50,6 +52,7 @@ type Problem
   | ExpectingEndOfExpression
   | ExpectingTyBool
   | ExpectingTyInt
+  | ExpectingTyChar
   | ExpectingIf
   | ExpectingThen
   | ExpectingElse
@@ -86,6 +89,7 @@ type Expr
   | EApplication (Located Expr) (Located Expr)
   | EBool Bool
   | EInt Int
+  | EChar Char
   | EPair (Located Expr) (Located Expr)
   | EPairAccess (Located Expr) (Located PairIndex)
   | ERecord (Dict String (Located String, Located Expr))
@@ -118,6 +122,7 @@ type Comparison
 type Type
   = TyBool
   | TyInt
+  | TyChar
   | TyUnit
   | TyName (Located String) (Maybe (Located Type))
   | TyCustom (Located String) (Dict String (Located String, Located Type))
@@ -527,6 +532,7 @@ parseComponent =
     , parseIf
     , parseBool
     , parseInt
+    , parseChar
     , parseVariable
     ]
   |= loop []
@@ -571,6 +577,24 @@ parseInt =
   |= ( backtrackable <|
     int ExpectingInt ExpectingInt
     )
+
+
+parseChar : LambdaParser (Located Expr)
+parseChar =
+  located <|
+  succeed
+    (\str ->
+      EChar <|
+      case String.uncons str of
+        Just (c, _) ->
+          c
+        
+        Nothing ->
+          'I' -- impossible
+    )
+    |. symbol (Token "'" ExpectingSingleQuote)
+    |= (getChompedString <| chompIf (\_ -> True) ExpectingChar)
+    |. symbol (Token "'" ExpectingSingleQuote)
 
 
 parseRecord : LambdaParser (Located Expr)
@@ -716,6 +740,7 @@ parseBaseType =
   oneOf
     [ map (\_ -> TyBool) <| keyword (Token "Bool" ExpectingTyBool)
     , map (\_ -> TyInt) <| keyword (Token "Int" ExpectingTyInt)
+    , map (\_ -> TyChar) <| keyword (Token "Char" ExpectingTyChar)
     ]
 
 
@@ -983,6 +1008,12 @@ showProblem p =
     ExpectingVerticalBar ->
       "a '|'"
 
+    ExpectingSingleQuote ->
+      "a '''"
+
+    ExpectingChar ->
+      "a character"
+
     ExpectingOne ->
       "a '1'"
     
@@ -1018,6 +1049,9 @@ showProblem p =
 
     ExpectingTyInt ->
       "a type 'Int'"
+    
+    ExpectingTyChar ->
+      "a type 'Char'"
 
     ExpectingIf ->
       "a 'if'"
@@ -1233,6 +1267,9 @@ showExpr expr =
       ""
       variants
 
+    EChar c ->
+      "'" ++ String.fromChar c ++ "'"
+
 
 showPairIndex : PairIndex -> String
 showPairIndex index =
@@ -1290,6 +1327,9 @@ showType t =
 
     TyUnit ->
       "()"
+    
+    TyChar ->
+      "Char"
 
     TyName name _ ->
       name.value

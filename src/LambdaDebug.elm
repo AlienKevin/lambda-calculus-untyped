@@ -104,22 +104,29 @@ source =
 --   Age Int
 --   """
 
-  """type alias Position =
-  (Int, Int)
-p1 = (\\p:Position. p) (0, 1)
-p2 = (2, 5)
-squaredDistance = \\p1:Position. \\p2:Position.
-  let
-    dx =
-      p2.1 - p1.1
-  in
-  let
-    dy =
-      p2.2 - p1.2
-  in
-  dx * dx + dy * dy
+--   """type alias Position =
+--   (Int, Int)
+-- p1 = (\\p:Position. p) (0, 1)
+-- p2 = (2, 5)
+-- squaredDistance = \\p1:Position. \\p2:Position.
+--   let
+--     dx =
+--       p2.1 - p1.1
+--   in
+--   let
+--     dy =
+--       p2.2 - p1.2
+--   in
+--   dx * dx + dy * dy
 
-d1 = squaredDistance p1 p2
+-- d1 = squaredDistance p1 p2
+--   """
+  """type alias Letter = Char
+
+letter1 = 'a'
+isZero = \\c: Char. c == '0'
+v1 = isZero letter1
+v2 = isZero '0'
   """
 
 main =

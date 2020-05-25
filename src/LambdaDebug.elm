@@ -58,51 +58,51 @@ source =
 --   double (double b)
 --   """
   -- "negate = \\a:Int. --2"
---   """p1 = Adult (Age 30)
--- p2 = Teen (Age 15)
--- p3 = quadruplePersonAge p2
--- -- p2 = (\\p: Person. p) (Person (Age 15))
--- -- p3 = (\\p: Adult. p)
--- -- p4 = (\\p: Eiowe. p)
+  """p1 = Adult (Age 30)
+p2 = Teen (Age 15)
+p3 = quadruplePersonAge p2
+-- p2 = (\\p: Person. p) (Person (Age 15))
+-- p3 = (\\p: Adult. p)
+-- p4 = (\\p: Eiowe. p)
 
--- a1 = Age 1
--- a2 = doubleAge a1
+a1 = Age 1
+a2 = doubleAge a1
 
--- doubleAge = \\a: Age.
---   case a of
---     Age a ->
---       Age (a * 2)
-
-
--- isAdultAge = \\a: Age.
---   case a of
---     Age a ->
---       a >= 18
+doubleAge = \\a: Age.
+  case a of
+    Age a ->
+      Age (a * 2)
 
 
--- quadruplePersonAge = \\p:Person.
---   case p of
---     Adult age ->
---       Adult (doubleAge (doubleAge age))
+isAdultAge = \\a: Age.
+  case a of
+    Age a ->
+      a >= 18
+
+
+quadruplePersonAge = \\p:Person.
+  case p of
+    Adult age ->
+      Adult (doubleAge (doubleAge age))
     
---     Teen age ->
---       let
---         newAge =
---           doubleAge (doubleAge age)
---       in
---       if isAdultAge newAge then
---         Adult newAge
---       else
---         Teen newAge
+    Teen age ->
+      let
+        newAge =
+          doubleAge (doubleAge age)
+      in
+      if isAdultAge newAge then
+        Adult newAge
+      else
+        Teen newAge
 
 
--- type Person
---   = Adult Age
---   | Teen Age
+type Person
+  = Adult Age
+  | Teen Age
 
--- type Age =
---   Age Int
---   """
+type Age =
+  Age Int
+  """
 
 --   """type alias Position =
 --   (Int, Int)
@@ -120,14 +120,12 @@ source =
 --   dx * dx + dy * dy
 
 -- d1 = squaredDistance p1 p2
+  -- """
+--   """letter1 = 'a'
+-- isZero = \\c: Char. c == '0'
+-- v1 = isZero letter1
+-- v2 = isZero '0'
 --   """
-  """type alias Letter = Char
-
-letter1 = 'a'
-isZero = \\c: Char. c == '0'
-v1 = isZero letter1
-v2 = isZero '0'
-  """
 
 main =
   let

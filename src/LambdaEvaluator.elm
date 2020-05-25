@@ -93,7 +93,7 @@ evalDef strategy otherDefs def =
                   ( withLocation label <|
                     TmAbstraction
                     (withLocation ty <| "$variant")
-                    (withLocation name <| TyName name Nothing)
+                    (withLocation name <| TyName name)
                     (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
                   ) |>
                   (\tm ->

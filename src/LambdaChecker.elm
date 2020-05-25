@@ -297,7 +297,7 @@ getType ctx expr =
             Just (TyCustom tyName _) ->
               Err <| MisusedTypeAsVariable name tyName
             
-            Just (TyName tyName _) ->
+            Just (TyName tyName) ->
               Err <| MisusedTypeAsVariable name tyName
             
             _ ->
@@ -314,7 +314,7 @@ getType ctx expr =
         -- _ = Debug.log "AL -> ctx" <| ctx
       in
       ( case boundType.value of
-        TyName name _ ->
+        TyName name ->
           case getTypeFromContext ctx name of
             Just (TyFunc _ innerType) ->
               case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
@@ -520,7 +520,7 @@ getType ctx expr =
           TyCustom tyName tyVariants ->
             getTypeFromVariants ctx expr tyName tyVariants variants
 
-          TyName name _ ->
+          TyName name ->
             ( case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
               Just ty ->
                 Ok <| withLocation e ty
@@ -670,23 +670,16 @@ areEqualTypes ty1 ty2 =
     (TyUnit, TyUnit) ->
       True
     
-    (TyName n1 n1ty, TyName n2 n2ty) ->
+    (TyName n1, TyName n2) ->
       n1.value == n2.value
-      || ( case (n1ty, n2ty) of
-        (Just t1, Just t2) ->
-          areEqualTypes t1.value t2.value
-        
-        _ ->
-          False
-        )
     
     (TyCustom n1 _, TyCustom n2 _) ->
       n1.value == n2.value
     
-    (TyName n1 _, TyCustom n2 _) ->
+    (TyName n1, TyCustom n2 _) ->
       n1.value == n2.value
     
-    (TyCustom n1 _, TyName n2 _) ->
+    (TyCustom n1 _, TyName n2) ->
       n1.value == n2.value
 
     (TyPair p1ty1 p1ty2, TyPair p2ty1 p2ty2) ->
@@ -1059,7 +1052,7 @@ sortDefs defs =
 getFreeTypes : Type -> List (Located String)
 getFreeTypes ty =
   case ty of
-    TyName label _ ->
+    TyName label ->
       [ label ]
     
     TyCustom name variants ->
@@ -1108,7 +1101,7 @@ getFreeVariablesAndTypesHelper boundVariables expr =
     EAbstraction boundVar boundType innerExpr ->
       Set.union
       ( case boundType.value of
-        TyName label _ ->
+        TyName label ->
           Set.singleton label.value
         
         TyCustom name _ ->

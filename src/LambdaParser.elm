@@ -124,7 +124,7 @@ type Type
   | TyInt
   | TyChar
   | TyUnit
-  | TyName (Located String) (Maybe (Located Type))
+  | TyName (Located String)
   | TyCustom (Located String) (Dict String (Located String, Located Type))
   | TyPair (Located Type) (Located Type)
   | TyRecord (Dict String (Located String, Located Type))
@@ -749,7 +749,7 @@ parseVariantType =
   map
   (\name ->
     withLocation name <|
-    TyName name Nothing
+    TyName name
   )
   parseTypeName
 
@@ -1331,7 +1331,7 @@ showType t =
     TyChar ->
       "Char"
 
-    TyName name _ ->
+    TyName name ->
       name.value
     
     TyCustom name _ ->
@@ -1397,7 +1397,7 @@ fakeDef =
 
 fakeType : Type
 fakeType =
-  TyName (fakeLocated "IMPOSSIBLE") Nothing
+  TyName (fakeLocated "IMPOSSIBLE")
 
 
 optionalWithDefault : a -> LambdaParser a -> LambdaParser a

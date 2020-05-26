@@ -1352,13 +1352,17 @@ showTermHelper names tm =
       ++ indentStr ( "\n" ++ showTermHelper names elseBranch.value)
 
     TmLet (label, e1) e2 ->
+      let
+        (newNames, newLabel) =
+          pickNewName names label
+      in
       indentStr <|
       "\nlet"
       ++ indentStr (
-        "\n" ++ label.value ++ " = " ++ showTermHelper names e1.value
+        "\n" ++ newLabel.value ++ " = " ++ showTermHelper names e1.value
       )
       ++ "\nin"
-      ++ "\n" ++ showTermHelper names e2.value
+      ++ "\n" ++ showTermHelper newNames e2.value
 
     TmUnit ->
       "()"
@@ -1368,8 +1372,12 @@ showTermHelper names tm =
       ++ Dict.foldl
       (\_ (variantName, valueName, innerExpr) str ->
         indentStr (
-          "\n" ++ variantName.value ++ " " ++ valueName.value ++ " ->"
-          ++ indentStr ("\n" ++ showTermHelper names innerExpr.value)
+          let
+            (newNames, newValueName) =
+              pickNewName names valueName
+          in
+          "\n" ++ variantName.value ++ " " ++ newValueName.value ++ " ->"
+          ++ indentStr ("\n" ++ showTermHelper newNames innerExpr.value)
         ) ++ str
       )
       ""

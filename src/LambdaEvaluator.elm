@@ -1,7 +1,7 @@
 module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
-import LambdaParser exposing (termShift, termSubst, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
+import LambdaParser exposing (termShift, termSubst, typeSubst, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
 import Location exposing (withLocation, Located)
 import Dict
 
@@ -198,6 +198,19 @@ evalTermFullHelper t =
 commonEval : (Located Term -> Result () (Located Term)) -> Located Term -> Result () (Located Term)
 commonEval f tm =
   case tm.value of
+    TmTApplication tm1 ty ->
+      case tm1.value of
+        TmTAbstraction _ tm12 ->
+          Ok tm12
+        
+        _ ->
+          f tm1 |>
+          Result.map
+          (\newTm1 ->
+            withLocation tm <| TmTApplication newTm1 ty
+          )
+
+
     TmIf condition thenBranch elseBranch ->
       case condition.value of
         TmBool bool ->
@@ -214,15 +227,7 @@ commonEval f tm =
           )
 
     TmLet (label, tm1) tm2 ->
-      -- let
-        -- _ = Debug.log "AL -> tm1" <| tm1.value
-        -- _ = Debug.log "AL -> termShift 1 0 tm1" <| termShift 1 0 tm1
-        -- _ = Debug.log "AL -> (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| (termSubst 0 (termShift 1 0 tm1) tm2).value
-        -- _ = Debug.log "AL -> termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)" <| showTermDebug <| .value <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
-        -- _ = Debug.log "AL -> tm2" <| showTermDebug tm2.value
-      -- in
       if isValue tm1 then
-        -- Ok <| termSubst 0 tm1 tm2
         Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
       else
         f tm1 |>
@@ -519,6 +524,9 @@ isValue : Located Term -> Bool
 isValue t =
   case t.value of
     TmAbstraction _ _ _ ->
+      True
+
+    TmTAbstraction _ _ ->
       True
 
     TmBool _ ->

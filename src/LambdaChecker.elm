@@ -1,7 +1,7 @@
 module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, getDefName, Problem(..))
 
 
-import LambdaParser exposing (showType, showCustomType, getFreeTypes, fakeType, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
+import LambdaParser exposing (showType, showCustomType, getFreeTypes, typeSubst, fakeType, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
 import Dict exposing (Dict)
 import Location exposing (showLocation, isFakeLocated, withLocation, fakeLocated, Located)
 import List.Extra
@@ -16,6 +16,7 @@ type Problem
   | TypeError (Located String)
   | ExpectingVariantsInECase (List (Located String)) (Located Term)
   | ExpectingVariantInTyCustom (Located String) ((Located String), (Dict String (Located String, Located Type)))
+  | ExpectingTyAll (Located Type)
   | ExpectingTyCustom (Located Type)
   | ExpectingTyFunc (Located Type)
   | ExpectingTyBool (Located Type)
@@ -33,6 +34,7 @@ type alias Ctx =
 
 type Binding
   = VarBind (Located Type)
+  | TyVarBind
 
 
 fakeBinding : Binding
@@ -191,8 +193,13 @@ checkFreeTypes names ty =
 checkTerm : Dict String (Located String) -> Located Term -> List Problem
 checkTerm names tm =
   case tm.value of
-    TmVariable _ ->
-      []
+    TmVariable _ maybeUndefinedName ->
+      case maybeUndefinedName of
+        Just name ->
+          [ UndefinedVariable name ]
+        
+        Nothing ->
+          []
     
     TmAbstraction boundVar _ innerExpr ->
       checkTerm (Dict.insert boundVar.value boundVar names) innerExpr
@@ -200,6 +207,13 @@ checkTerm names tm =
     TmApplication func arg ->
       checkTerm names func
       ++ checkTerm names arg
+
+    TmTAbstraction boundTy t1 ->
+      checkTerm (Dict.insert boundTy.value boundTy names) t1
+
+    TmTApplication t1 ty ->
+      checkTerm names t1
+      ++ checkFreeTypes names ty
 
     TmBool _ ->
       []
@@ -276,7 +290,7 @@ checkTermBinaryHelper names left right =
 getType : Ctx -> Located Term -> Result Problem (Located Type)
 getType ctx tm =
   case tm.value of
-    TmVariable index ->
+    TmVariable index _ ->
       case getTypeFromContext ctx index of
         Nothing ->
           Err <| TypeError <| withLocation tm <| indexToName ctx index
@@ -312,6 +326,29 @@ getType ctx tm =
             _ ->
               Err <| ExpectingTyFunc ty1
         )
+      )
+
+    TmTAbstraction boundVar innerExpr ->
+      let
+        innerCtx =
+          addBinding ctx boundVar.value TyVarBind
+      in
+      getType innerCtx innerExpr |>
+      Result.map
+      (\innerType ->
+        withLocation tm <| TyAll boundVar innerType
+      )
+
+    TmTApplication tm1 ty2 ->
+      getType ctx tm1 |>
+      Result.andThen
+      (\ty1 ->
+        case ty1.value of
+          TyAll _ ty12 ->
+            Ok <| typeSubst 0 ty2 ty12
+          
+          _ ->
+            Err <| ExpectingTyAll ty1
       )
 
     TmIf condition thenBranch elseBranch ->
@@ -625,6 +662,9 @@ areEqualTypes ty1 ty2 =
     (TyFunc fromType1 toType1, TyFunc fromType2 toType2) ->
       areEqualTypes fromType1.value fromType2.value
       && areEqualTypes toType1.value toType2.value
+    
+    (TyVar i1, TyVar i2) ->
+      i1 == i2
 
     _ ->
       False
@@ -688,6 +728,9 @@ getTypeFromContext ctx index =
   case getBinding ctx index of
     VarBind ty ->
       Just ty.value
+    
+    TyVarBind ->
+      Nothing
 
 
 showProblems : List String -> Int -> List Problem -> String
@@ -822,11 +865,19 @@ showProblemWithSingleSourceHelper src problem =
       , "Hint: Try adding the variant to the custom type or removing it in the case expression."
       ]
 
+    ExpectingTyAll ty ->
+      [ "-- EXPECTING UNIVERSAL TYPE\n"
+      , "I'm expecting an universal type here:"
+      , showLocation src ty
+      , "but got " ++ showType [] ty.value ++ "."
+      , "Hint: Try changing it to an universal type."
+      ]
+
     ExpectingTyCustom ty ->
       [ "-- EXPECTING CUSTOM TYPE\n"
       , "I'm expecting a custom type here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a custom type."
       ]
 
@@ -834,7 +885,7 @@ showProblemWithSingleSourceHelper src problem =
       [ "-- EXPECTING FUNCTION\n"
       , "I'm expecting a function here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a function."
       ]
 
@@ -842,7 +893,7 @@ showProblemWithSingleSourceHelper src problem =
       [ "-- EXPECTING BOOL\n"
       , "I'm expecting a Bool here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a Bool."
       ]
 
@@ -850,7 +901,7 @@ showProblemWithSingleSourceHelper src problem =
       [ "-- EXPECTING INT\n"
       , "I'm expecting a Int here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a Int."
       ]
     
@@ -858,7 +909,7 @@ showProblemWithSingleSourceHelper src problem =
       [ "-- EXPECTING PAIR\n"
       , "I'm expecting a pair here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a pair."
       ]
 
@@ -866,7 +917,7 @@ showProblemWithSingleSourceHelper src problem =
       [ "-- EXPECTING RECORD\n"
       , "I'm expecting a record here:"
       , showLocation src ty
-      , "but got " ++ showType ty.value ++ "."
+      , "but got " ++ showType [] ty.value ++ "."
       , "Hint: Try changing it to a record."
       ]
 
@@ -880,10 +931,10 @@ showProblemWithSingleSourceHelper src problem =
 
     MismatchedType ty1 ty2 ->
       [ "-- MISMATCHED TYPES\n"
-      , "I'm expecting a " ++ showType ty1.value ++ " type here:"
+      , "I'm expecting a " ++ showType [] ty1.value ++ " type here:"
       , showLocation src ty2
-      , "but got " ++ showType ty2.value ++ "."
-      , "Hint: Try changing it to a " ++ showType ty1.value ++ "."
+      , "but got " ++ showType [] ty2.value ++ "."
+      , "Hint: Try changing it to a " ++ showType [] ty1.value ++ "."
       ]
 
     TypeError variable ->

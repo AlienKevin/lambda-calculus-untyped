@@ -1,7 +1,7 @@
 module LambdaParser exposing
   ( parseDefs, parseTerm
   , showProblems, showDefs, showDef, showTermHelper, showType, showCustomType
-  , getFreeTypes, termShift, termSubst
+  , getFreeTypes, termShift, termSubst, typeShift, typeSubst
   , fakeDef, fakeType
   , Def(..), Term(..), Type(..), Comparison(..), PairIndex(..)
   )
@@ -23,6 +23,8 @@ type Context
   = CVariable
   | CAbstraction
   | CApplication
+  | CTAbstraction
+  | CTApplication
   | CIf
   | CType
 
@@ -45,6 +47,8 @@ type Problem
   | ExpectingRightBrace
   | ExpectingVerticalBar
   | ExpectingSingleQuote
+  | ExpectingLeftAngleBracket
+  | ExpectingRightAngleBracket
   | ExpectingChar
   | ExpectingOne
   | ExpectingTwo
@@ -108,6 +112,8 @@ type Expr
   = EVariable (Located String)
   | EAbstraction (Located String) (Located Type) (Located Expr)
   | EApplication (Located Expr) (Located Expr)
+  | ETAbstraction (Located String) (Located Expr)
+  | ETApplication (Located Expr) (Located Type)
   | EBool Bool
   | EInt Int
   | EChar Char
@@ -127,9 +133,11 @@ type Expr
 
 
 type Term
-  = TmVariable Int
+  = TmVariable Int (Maybe (Located String))
   | TmAbstraction (Located String) (Located Type) (Located Term)
   | TmApplication (Located Term) (Located Term)
+  | TmTAbstraction (Located String) (Located Term)
+  | TmTApplication (Located Term) (Located Type)
   | TmVariant (Located String) (Located Term) (Located Type)
   | TmBool Bool
   | TmInt Int
@@ -173,6 +181,8 @@ type Type
   | TyPair (Located Type) (Located Type)
   | TyRecord (Dict String (Located String, Located Type))
   | TyFunc (Located Type) (Located Type)
+  | TyAll (Located String) (Located Type)
+  | TyVar Int
 
 
 reserved : Set String
@@ -243,7 +253,7 @@ parserDefsToDefs parserDefs =
                     (withLocation label <|
                       TmVariant
                       label
-                      (withLocation ty <| TmVariable 0)
+                      (withLocation ty <| TmVariable 0 Nothing)
                       customType
                     )
                   ) |>
@@ -253,7 +263,7 @@ parserDefsToDefs parserDefs =
                 )
                 mappings
                 variants
-                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1) customType)
+                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1 Nothing) customType)
               )
             
             ParserDAlias { name, ty } ->
@@ -268,7 +278,7 @@ parserDefsToDefs parserDefs =
               in
               ( Dict.insert name.value def defs
               , mappings
-                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1) ty)
+                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1 Nothing) ty)
               )
         )
         (Dict.empty, Dict.empty)
@@ -582,35 +592,42 @@ parseApplicationHelper =
   )
 
 
+type PostComponent
+  = PostIndex (Located PairIndex)
+  | PostName (Located String)
+  | PostType (Located Type)
+
+
 parseComponent : LambdaParser (Located Expr)
 parseComponent =
   located <|
   succeed
-  (\expr pairIndices ->
-    case pairIndices of
+  (\expr postComponents ->
+    case postComponents of
       [] ->
         expr.value
       
       _ ->
         .value <|
         List.foldl
-          (\index e ->
-            case index.value of
-              "1" ->
-                withLocation e <| EPairAccess e (withLocation index PairIndexOne)
+          (\postComponent e ->
+            case postComponent of
+              PostIndex index ->
+                withLocation e <| EPairAccess e index
               
-              "2" ->
-                withLocation e <| EPairAccess e (withLocation index PairIndexTwo)
-
-              _ ->
-                withLocation e <| ERecordAccess e index
+              PostName name ->
+                withLocation e <| ERecordAccess e name
+              
+              PostType ty ->
+                withLocation e <| ETApplication e ty
 
           )
           expr
-          pairIndices
+          postComponents
   )
   |= oneOf
-    [ parseAbstraction
+    [ backtrackable parseTAbstraction
+    , parseAbstraction
     , backtrackable parseUnit
     , parseGroupOrPair
     , parseRecord
@@ -621,18 +638,21 @@ parseComponent =
     , parseVariable
     ]
   |= loop []
-    (\revIndices ->
+    (\revPostComponents ->
       oneOf
-      [ succeed (\index -> Loop <| index :: revIndices)
-        |. symbol (Token "." ExpectingDot)
-        |= ( located <| oneOf
-          [ map (\_ -> "1") <| symbol (Token "1" ExpectingOne)
-          , map (\_ -> "2") <| symbol (Token "2" ExpectingTwo)
-          , map .value parseName
+      [ succeed (\postComponent -> Loop <| postComponent :: revPostComponents)
+        |= oneOf
+          [ succeed identity
+            |. symbol (Token "." ExpectingDot)
+            |= oneOf
+              [ map (\loc -> PostIndex <| withLocation loc PairIndexOne) <| located <| symbol (Token "1" ExpectingOne)
+              , map (\loc -> PostIndex <| withLocation loc PairIndexTwo) <| located <| symbol (Token "2" ExpectingTwo)
+              , map PostName parseName
+              ]
+          , map PostType parseSecondPartOfTApplication
           ]
-        )
       , succeed ()
-        |> map (\_ -> Done <| List.reverse revIndices)
+        |> map (\_ -> Done <| List.reverse revPostComponents)
       ]
     )
 
@@ -737,7 +757,7 @@ parseGroupOrPair =
     |. symbol (Token ")" ExpectingRightParen)
 
 
--- \x. x
+-- \x. t
 parseAbstraction : LambdaParser (Located Expr)
 parseAbstraction =
   inContext CAbstraction <|
@@ -754,6 +774,32 @@ parseAbstraction =
     |. symbol (Token "." ExpectingDot)
     |. sps
     |= lazy (\_ -> internalParseExpr)
+
+
+-- \X. t
+parseTAbstraction : LambdaParser (Located Expr)
+parseTAbstraction =
+  inContext CTAbstraction <|
+  located <|
+  succeed ETAbstraction
+    |. symbol (Token "\\" ExpectingBackslash)
+    |. sps
+    |= parseTypeName
+    |. sps
+    |. symbol (Token "." ExpectingDot)
+    |. sps
+    |= lazy (\_ -> internalParseExpr)
+
+
+parseSecondPartOfTApplication : LambdaParser (Located Type)
+parseSecondPartOfTApplication =
+  inContext CTApplication <|
+  succeed identity
+    |. symbol (Token "<" ExpectingLeftAngleBracket)
+    |. sps
+    |= parseType
+    |. sps
+    |. symbol (Token ">" ExpectingRightAngleBracket)
 
 
 parseIf : LambdaParser (Located Expr)
@@ -1095,6 +1141,12 @@ showProblem p =
 
     ExpectingSingleQuote ->
       "a '''"
+    
+    ExpectingLeftAngleBracket ->
+      "a '<'"
+    
+    ExpectingRightAngleBracket ->
+      "a '>'"
 
     ExpectingChar ->
       "a character"
@@ -1194,6 +1246,12 @@ showProblemContext context =
     
     CAbstraction ->
       "abstraction"
+    
+    CTApplication ->
+      "type application"
+    
+    CTAbstraction ->
+      "type abstraction"
 
     CIf ->
       "if expression"
@@ -1245,7 +1303,7 @@ showDef def =
     
     DAlias { name, ty } ->
       "type alias " ++ name.value ++ " ="
-      ++ (indentStr <| "\n" ++ showType ty.value)
+      ++ (indentStr <| "\n" ++ showType [] ty.value)
 
 
 showTerm : Term -> String
@@ -1256,7 +1314,7 @@ showTerm tm =
 showTermHelper : List String -> Term -> String
 showTermHelper names tm =
   case tm of
-    TmVariable index ->
+    TmVariable index _ ->
       Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
     
     TmApplication e1 e2 ->
@@ -1281,19 +1339,34 @@ showTermHelper names tm =
       )
     
     TmAbstraction boundVar boundType t1 ->
-      if boundVar.value == "$variant" then
-        case t1.value of
-          TmVariant variantName _ _ ->
-            variantName.value
+      let
+        (newNames, newBoundVar) =
+          pickNewName names boundVar
+      in
+      "\\" ++ newBoundVar.value ++ ":" ++ showType names boundType.value ++ ". " ++ showTermHelper newNames t1.value
+
+    TmTApplication e1 ty ->
+      ( if needsWrapping e1.value
+        && ( case e1.value of
+          TmTApplication _ _ ->
+            False
           
-          _ -> -- impossible
-            "IMPOSSIBLE"
-      else
-        let
-          (newNames, newBoundVar) =
-            pickNewName names boundVar
-        in
-        "\\" ++ newBoundVar.value ++ ":" ++ showType boundType.value ++ ". " ++ showTermHelper newNames t1.value
+          _ ->
+            True
+        ) then
+          "(" ++ showTermHelper names e1.value ++ ")"
+        else
+          showTermHelper names e1.value
+      )
+      ++ " "
+      ++ "<" ++ showType names ty.value ++ ">"
+
+    TmTAbstraction boundVar e1 ->
+      let
+        (newNames, newBoundVar) =
+          pickNewName names boundVar
+      in
+      "\\" ++ newBoundVar.value ++ ". " ++ showTermHelper newNames e1.value
 
     TmBool bool ->
       if bool then
@@ -1428,7 +1501,7 @@ getOperatorPrecedence tm =
 needsWrapping : Term -> Bool
 needsWrapping tm =
   case tm of
-    TmVariable _ ->
+    TmVariable _ _ ->
       False
     
     TmBool _ ->
@@ -1498,14 +1571,14 @@ showCustomType name variants =
     ++ ( String.join "\n  | " <|
       List.map
       (\(label, (_, ty)) ->
-        label ++ " " ++ showType ty.value
+        label ++ " " ++ showType [] ty.value
       )
       (Dict.toList variants)
     )
 
 
-showType : Type -> String
-showType t =
+showType : List String -> Type -> String
+showType names t =
   case t of
     TyBool ->
       "Bool"
@@ -1526,7 +1599,7 @@ showType t =
       name.value
 
     TyPair t1 t2 ->
-      "(" ++ showType t1.value ++ ", " ++ showType t2.value ++ ")"
+      "(" ++ showType names t1.value ++ ", " ++ showType names t2.value ++ ")"
 
     TyRecord r ->
       (\pairs ->
@@ -1540,7 +1613,7 @@ showType t =
       String.join "\n, " <|
       Dict.foldr
         (\_ (label, ty) list ->
-          (label.value ++ " = " ++ showType ty.value) :: list
+          (label.value ++ " = " ++ showType names ty.value) :: list
         )
         []
         r
@@ -1548,13 +1621,19 @@ showType t =
     TyFunc t1 t2 ->
       ( case t1.value of
         TyFunc _ _ ->
-          "(" ++ showType t1.value ++ ")"
+          "(" ++ showType names t1.value ++ ")"
         
         _ ->
-          showType t1.value
+          showType names t1.value
       )
       ++ "->"
-      ++ showType t2.value
+      ++ showType names t2.value
+    
+    TyAll boundVar ty ->
+      "Forall " ++ boundVar.value ++ "." ++ showType names ty.value
+    
+    TyVar index ->
+      Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
 
 
 indentStr : String -> String
@@ -1577,7 +1656,7 @@ fakeLocatedExpr =
 
 fakeLocatedTerm : Located Term
 fakeLocatedTerm =
-  fakeLocated <| TmVariable -1
+  fakeLocated <| TmVariable -1 Nothing
 
 
 fakeDef : Def
@@ -1625,8 +1704,8 @@ exprToTerm mappings expr =
   case expr.value of
     EVariable name ->
       case Dict.get name.value mappings of
-        Nothing -> -- impossible
-          TmVariable -1
+        Nothing ->
+          TmVariable -1 (Just name)
         
         Just s ->
           s.value
@@ -1636,25 +1715,10 @@ exprToTerm mappings expr =
         innerMappings =
           mappings |>
           Dict.map (\_ s -> termShift 1 0 s) |>
-          Dict.insert boundVar.value (withLocation boundVar <| TmVariable 0)
+          Dict.insert boundVar.value (withLocation boundVar <| TmVariable 0 Nothing)
         
         newBoundType =
-          case boundType.value of
-            TyName name ->
-              case Dict.get name.value mappings of
-                Just ty ->
-                  case ty.value of
-                    TmVariant _ _ substTy ->
-                      substTy
-                    
-                    _ ->
-                      boundType
-                
-                Nothing ->
-                  boundType
-            
-            _ ->
-              boundType
+          typeNameSubst mappings boundType
       in
       TmAbstraction boundVar newBoundType <| exprToTerm innerMappings e1
 
@@ -1662,6 +1726,27 @@ exprToTerm mappings expr =
       TmApplication
       (exprToTerm mappings e1)
       (exprToTerm mappings e2)
+    
+    ETAbstraction boundVar e1 ->
+      let
+        newMappings =
+          mappings |>
+          Dict.map (\_ s -> termShift 1 0 s) |>
+          Dict.insert
+          boundVar.value
+          ( withLocation boundVar <|
+            TmVariant boundVar (withLocation boundVar <| TmVariable -1 Nothing) <|
+            withLocation boundVar <| TyVar 0
+          )
+      in
+      TmTAbstraction
+      boundVar
+      (exprToTerm newMappings e1)
+
+    ETApplication e1 ty ->
+      TmTApplication
+      (exprToTerm mappings e1)
+      ty
 
     EIf condition thenBranch elseBranch ->
       TmIf
@@ -1674,7 +1759,7 @@ exprToTerm mappings expr =
         innerCtx =
           mappings |>
           Dict.map (\_ s -> termShift 1 0 s) |>
-          Dict.insert label.value (withLocation label <| TmVariable 0)
+          Dict.insert label.value (withLocation label <| TmVariable 0 Nothing)
       in
       TmLet
       (label, exprToTerm mappings e1)
@@ -1689,7 +1774,7 @@ exprToTerm mappings expr =
             innerCtx =
               mappings |>
               Dict.map (\_ s -> termShift 1 0 s) |>
-              Dict.insert valueName.value (withLocation valueName <| TmVariable 0)
+              Dict.insert valueName.value (withLocation valueName <| TmVariable 0 Nothing)
           in
           (variantName, valueName, exprToTerm innerCtx innerExpr)
         )
@@ -1752,196 +1837,233 @@ exprToTermBinaryHelper mappings f left right =
     (exprToTerm mappings right)
 
 
+termMap : (Int -> Int -> Term) -> (Int -> Located Type -> Located Type) -> Int -> Located Term -> Located Term
+termMap onVar onType cutOff term =
+  let
+    walk c t =
+      withLocation t <|
+      case t.value of
+        TmVariable k _ ->
+          onVar c k
+        
+        TmAbstraction boundVar boundType t1 ->
+          TmAbstraction boundVar boundType <| walk (c + 1) t1
+
+        TmApplication t1 t2 ->
+          TmApplication (walk c t1) (walk c t2)
+
+        TmTAbstraction boundVar tm ->
+          TmTAbstraction boundVar <| walk c tm
+        
+        TmTApplication tm ty ->
+          TmTApplication (walk c tm) (onType c ty)
+
+        TmIf condition thenBranch elseBranch ->
+          TmIf
+          (walk c condition)
+          (walk c thenBranch)
+          (walk c elseBranch)
+
+        TmLet (label, tm1) tm2 ->
+          TmLet
+          (label, walk c tm1)
+          (walk (c + 1) tm2)
+        
+        TmCase tm variants ->
+          TmCase
+          (walk c tm)
+          ( Dict.map
+            (\_ (variantName, valueName, innerTerm) ->
+              (variantName, valueName, walk (c + 1) innerTerm)
+            )
+            variants
+          )
+        
+        TmVariant variantName value customType ->
+          TmVariant
+          variantName
+          (walk c value)
+          customType
+
+        TmPair t1 t2 ->
+          TmPair (walk c t1) (walk c t2)
+
+        TmPairAccess pair index ->
+          TmPairAccess (walk c pair) index
+
+        TmRecord r ->
+          TmRecord <|
+          Dict.map
+            (\_ (label, value) ->
+              (label, walk c value)
+            )
+            r
+
+        TmRecordAccess record label ->
+          TmRecordAccess (walk c record) label
+
+        TmAdd left right ->
+          TmAdd (walk c left) (walk c right)
+
+        TmSubtract left right ->
+          TmSubtract (walk c left) (walk c right)
+
+        TmMultiplication left right ->
+          TmMultiplication (walk c left) (walk c right)
+
+        TmDivision left right ->
+          TmDivision (walk c left) (walk c right)
+
+        TmComparison comp left right ->
+          TmComparison comp (walk c left) (walk c right)
+
+        TmBool _ ->
+          t.value
+
+        TmInt _ ->
+          t.value
+        
+        TmChar _ ->
+          t.value
+        
+        TmUnit ->
+          t.value
+  in
+  walk cutOff term
+
+
 termShift : Int -> Int -> Located Term -> Located Term
-termShift d c t =
-  withLocation t <|
-  case t.value of
-    TmVariable k ->
+termShift d cutOff term =
+  termMap
+    (\c k ->
       if k < c then
-        TmVariable k
+        TmVariable k Nothing
       else
-        TmVariable <| k + d
+        TmVariable (k + d) Nothing
+    )
+    (\c ty ->
+      typeShift 1 c ty
+    )
+    cutOff
+    term
     
-    TmAbstraction boundVar boundType t1 ->
-      TmAbstraction boundVar boundType <| termShift d (c + 1) t1
-
-    TmApplication t1 t2 ->
-      TmApplication (termShift d c t1) (termShift d c t2)
-
-    TmIf condition thenBranch elseBranch ->
-      TmIf
-      (termShift d c condition)
-      (termShift d c thenBranch)
-      (termShift d c elseBranch)
-
-    TmLet (label, tm1) tm2 ->
-      TmLet
-      (label, termShift d c tm1)
-      (termShift d (c + 1) tm2)
-    
-    TmCase tm variants ->
-      TmCase
-      (termShift d c tm)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          (variantName, valueName, termShift d (c + 1) innerTerm)
-        )
-        variants
-      )
-    
-    TmVariant variantName value customType ->
-      TmVariant
-      variantName
-      (termShift d c value)
-      customType
-
-    TmPair t1 t2 ->
-      termShiftBinaryHelper d c TmPair t1 t2
-
-    TmPairAccess pair index ->
-      TmPairAccess (termShift d c pair) index
-
-    TmRecord r ->
-      TmRecord <|
-      Dict.map
-        (\_ (label, value) ->
-          (label, termShift d c value)
-        )
-        r
-
-    TmRecordAccess record label ->
-      TmRecordAccess (termShift d c record) label
-
-    TmAdd left right ->
-      termShiftBinaryHelper d c TmAdd left right
-
-    TmSubtract left right ->
-      termShiftBinaryHelper d c TmSubtract left right
-
-    TmMultiplication left right ->
-      termShiftBinaryHelper d c TmMultiplication left right
-
-    TmDivision left right ->
-      termShiftBinaryHelper d c TmDivision left right
-
-    TmComparison comp left right ->
-      termShiftBinaryHelper d c (TmComparison comp) left right
-
-    TmBool _ ->
-      t.value
-
-    TmInt _ ->
-      t.value
-    
-    TmChar _ ->
-      t.value
-    
-    TmUnit ->
-      t.value
-
-
-termShiftBinaryHelper : Int -> Int -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
-termShiftBinaryHelper d c f left right =
-  f
-  (termShift d c left)
-  (termShift d c right)
-
 
 termSubst : Int -> Located Term -> Located Term -> Located Term
-termSubst j s t =
-  withLocation t <|
-  case t.value of
-    TmVariable k ->
-      if j == k then
-        s.value
+termSubst j subst term =
+  termMap
+    (\c k ->
+      if c == k then
+        (termShift c 0 subst).value
       else
-        t.value
-    
-    TmAbstraction boundVar boundType t1 ->
-      TmAbstraction boundVar boundType <| termSubst (j + 1) (termShift 1 0 s) t1
-
-    TmApplication t1 t2 ->
-      TmApplication
-      (termSubst j s t1)
-      (termSubst j s t2)
-
-    TmIf condition thenBranch elseBranch ->
-      TmIf
-      (termSubst j s condition)
-      (termSubst j s thenBranch)
-      (termSubst j s elseBranch)
-    
-    TmLet (label, tm1) tm2 ->
-      TmLet
-      (label, termSubst j s tm1)
-      (termSubst (j + 1) (termShift 1 0 s) tm2)
-    
-    TmCase tm variants ->
-      TmCase
-      (termSubst j s tm)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          (variantName, valueName, termSubst (j + 1) (termShift 1 0 s) innerTerm)
-        )
-        variants
-      )
-    
-    TmVariant variantName value customType ->
-      TmVariant
-      variantName
-      (termSubst j s value)
-      customType
-    
-    TmAdd left right ->
-      termSubstBinaryHelper j s TmAdd left right
-
-    TmSubtract left right ->
-      termSubstBinaryHelper j s TmSubtract left right
-
-    TmMultiplication left right ->
-      termSubstBinaryHelper j s TmMultiplication left right
-    
-    TmDivision left right ->
-      termSubstBinaryHelper j s TmDivision left right
-
-    TmComparison comp left right ->
-      termSubstBinaryHelper j s (TmComparison comp) left right
-
-    TmPair t1 t2 ->
-      termSubstBinaryHelper j s TmPair t1 t2
-
-    TmPairAccess pair index ->
-      TmPairAccess (termSubst j s pair) index
-
-    TmRecord r ->
-      TmRecord <|
-      Dict.map
-        (\_ (label, value) ->
-          (label, termSubst j s value)
-        )
-        r
-
-    TmRecordAccess record label ->
-      TmRecordAccess (termSubst j s record) label
-
-    TmBool _ ->
-      t.value
-
-    TmInt _ ->
-      t.value
-    
-    TmChar _ ->
-      t.value
-    
-    TmUnit ->
-      t.value
+        TmVariable k Nothing
+    )
+    (\_ ty ->
+      ty
+    )
+    j
+    term
 
 
-termSubstBinaryHelper : Int -> Located Term -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
-termSubstBinaryHelper j s f left right =
-  f
-  (termSubst j s left)
-  (termSubst j s right)
+tyMap : (Int -> Int -> Type) -> (Int -> Located String -> Type) -> Int -> Located Type -> Located Type
+tyMap onVar onName cutOff inputTy =
+  let
+    walk c ty =
+      withLocation ty <|
+      case ty.value of
+        TyVar k ->
+          onVar c k
+
+        TyName name ->
+          onName c name
+        
+        TyCustom name variants ->
+          TyCustom
+          name
+          ( Dict.map
+            (\_ (variantName, variantTy) ->
+              (variantName, walk c variantTy)
+            )
+            variants
+          )
+        
+        TyPair left right ->
+          TyPair
+          (walk c left)
+          (walk c right)
+
+        TyRecord r ->
+          TyRecord <|
+          Dict.map
+            (\_ (rLabel, rTy) ->
+              (rLabel, walk c rTy)
+            )
+            r
+
+        TyFunc fromTy toTy ->
+          TyFunc (walk c fromTy) (walk c toTy)
+        
+        TyAll boundVar t1 ->
+          TyAll boundVar (walk (c + 1) t1)
+        
+        _ ->
+          ty.value
+  in
+  walk cutOff inputTy
+
+
+typeShift : Int -> Int -> Located Type -> Located Type
+typeShift d cutOff ty =
+  tyMap
+    (\c k ->
+      if k < c then
+        TyVar k
+      else
+        TyVar (k + d)
+    )
+    (\_ name ->
+      TyName name
+    )
+    cutOff
+    ty
+
+
+typeSubst : Int -> Located Type -> Located Type -> Located Type
+typeSubst j s ty =
+  tyMap
+    (\c k ->
+      if k == c then
+        (typeShift c 0 s).value
+      else
+        TyVar k
+    )
+    (\_ name ->
+      TyName name
+    )
+    j
+    ty
+
+
+typeNameSubst : Mappings -> Located Type -> Located Type
+typeNameSubst mappings ty =
+  tyMap
+    (\_ k ->
+      TyVar k
+    )
+    (\_ name ->
+      case Dict.get name.value mappings of
+        Just mappingsTy ->
+          case mappingsTy.value of
+            TmVariant _ _ substTy ->
+              substTy.value
+            
+            _ ->
+              ty.value
+        
+        Nothing ->
+          ty.value
+    )
+    0
+    ty
 
 
 sortParserDefs : List ParserDef -> List ParserDef
@@ -2073,6 +2195,14 @@ getFreeNamesHelper boundVariables expr =
       Set.union
       (getFreeNamesHelper boundVariables func.value)
       (getFreeNamesHelper boundVariables arg.value)
+    
+    ETAbstraction _ innerExpr ->
+      getFreeNamesHelper boundVariables innerExpr.value
+
+    ETApplication e ty ->
+      Set.union
+      (getFreeNamesHelper boundVariables e.value)
+      (Set.fromList <| List.map .value <| getFreeTypes ty.value)
 
     EBool _ ->
       Set.empty

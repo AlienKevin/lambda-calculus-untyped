@@ -1,10 +1,9 @@
-module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, sortDefs, getDefName, Problem(..))
+module LambdaChecker exposing (checkDefs, showProblems, showProblemsWithSingleSource, getDefName, Problem(..))
 
 
-import LambdaParser exposing (showType, showCustomType, fakeDef, fakeType, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
+import LambdaParser exposing (showType, showCustomType, getFreeTypes, fakeType, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
 import Dict exposing (Dict)
 import Location exposing (showLocation, isFakeLocated, withLocation, fakeLocated, Located)
-import Set exposing (Set)
 import List.Extra
 
 
@@ -15,7 +14,7 @@ type Problem
   | MisusedVariantAsType (Located String) (Located String)
   | MisusedTypeAsVariable (Located String) (Located String)
   | TypeError (Located String)
-  | ExpectingVariantsInECase (List (Located String)) (Located Expr)
+  | ExpectingVariantsInECase (List (Located String)) (Located Term)
   | ExpectingVariantInTyCustom (Located String) ((Located String), (Dict String (Located String, Located Type)))
   | ExpectingTyCustom (Located Type)
   | ExpectingTyFunc (Located Type)
@@ -26,6 +25,19 @@ type Problem
   | ExpectingTyRecordWithLabel (Located String) (Located Type)
   | MismatchedType (Located Type) (Located Type)
   | CompareTyFunc (Located Type) (Located Type)
+
+
+type alias Ctx =
+  List (String, Binding)
+
+
+type Binding
+  = VarBind (Located Type)
+
+
+fakeBinding : Binding
+fakeBinding =
+  VarBind <| fakeLocated <| TyName <| fakeLocated "IMPOSSIBLE"
 
 
 checkDefs : List Def -> List Problem
@@ -106,13 +118,12 @@ getAllDeclaredNames def =
     
     DType { name, variants } ->
       name ::
-      ( Dict.foldl
+      Dict.foldl
         (\_ (label, _) names ->
           label :: names
         )
         []
         variants
-      )
     
     DAlias { name, ty } ->
       name ::
@@ -120,54 +131,33 @@ getAllDeclaredNames def =
 
 
 checkDefsTypes : List Def -> List Problem
-checkDefsTypes defs =
-  let
-    sortedDefs =
-      sortDefs defs
-  in
-  Tuple.first <|
+checkDefsTypes sortedDefs =
   List.foldl
-    (\def (problems, ctx) ->
+    (\def problems ->
       case def of
-        DValue { name, expr } ->
-          case getType ctx expr of
+        DValue { term } ->
+          case getType [] term of
             Err typeProblem ->
-              ( typeProblem :: problems
-              , ctx
-              )
+              typeProblem :: problems
             
-            Ok ty ->
-              ( problems
-              , addBinding ctx name.value ty.value
-              )
+            Ok _ ->
+              problems
         
-        DType { name, variants } ->
-          ( []
-          , Dict.foldl
-            (\_ (label, ty) nextCtx ->
-              addBinding nextCtx label.value (TyFunc ty (withLocation name <| TyCustom name variants))
-            )
-            ctx
-            variants |>
-            (\nextCtx2 ->
-              addBinding nextCtx2 ("$" ++ name.value) (TyCustom name variants)
-            )
-          )
+        DType _ ->
+          problems
         
-        DAlias { name, ty } ->
-          ( []
-          , addBinding ctx name.value ty.value
-          )
+        DAlias _ ->
+          problems
     )
-    ([], [])
+    []
     sortedDefs
 
 
 checkDef : Dict String (Located String) -> Def -> List Problem
 checkDef names def =
   case def of
-    DValue { expr } ->
-      checkExpr names expr
+    DValue { term } ->
+      checkTerm names term
     
     DType { variants } ->
       Dict.foldl
@@ -198,168 +188,114 @@ checkFreeTypes names ty =
   typeNames
 
 
-checkExpr : Dict String (Located String) -> Located Expr -> List Problem
-checkExpr names expr =
-  case expr.value of
-    EVariable name ->
-      if Dict.member name.value names then
-        []
-      else
-        [ UndefinedVariable name ]
-    
-    EAbstraction boundVar _ innerExpr ->
-      checkExpr (Dict.insert boundVar.value boundVar names) innerExpr
-    
-    EApplication func arg ->
-      checkExpr names func
-      ++ checkExpr names arg
-
-    EBool _ ->
-      []
-
-    EInt _ ->
+checkTerm : Dict String (Located String) -> Located Term -> List Problem
+checkTerm names tm =
+  case tm.value of
+    TmVariable _ ->
       []
     
-    EChar _ ->
+    TmAbstraction boundVar _ innerExpr ->
+      checkTerm (Dict.insert boundVar.value boundVar names) innerExpr
+    
+    TmApplication func arg ->
+      checkTerm names func
+      ++ checkTerm names arg
+
+    TmBool _ ->
       []
 
-    EPair e1 e2 ->
-      checkExprBinaryHelper names e1 e2
+    TmInt _ ->
+      []
+    
+    TmChar _ ->
+      []
 
-    EPairAccess pair _ ->
-      checkExpr names pair
+    TmPair e1 e2 ->
+      checkTermBinaryHelper names e1 e2
 
-    ERecord r ->
+    TmPairAccess pair _ ->
+      checkTerm names pair
+
+    TmRecord r ->
       Dict.foldl
         (\_ (_, value) problems ->
-          checkExpr names value ++ problems
+          checkTerm names value ++ problems
         )
         []
         r
 
-    ERecordAccess r _ ->
-      checkExpr names r
+    TmRecordAccess r _ ->
+      checkTerm names r
 
-    EAdd left right ->
-      checkExprBinaryHelper names left right
+    TmAdd left right ->
+      checkTermBinaryHelper names left right
 
-    ESubtract left right ->
-      checkExprBinaryHelper names left right
+    TmSubtract left right ->
+      checkTermBinaryHelper names left right
 
-    EMultiplication left right ->
-      checkExprBinaryHelper names left right
+    TmMultiplication left right ->
+      checkTermBinaryHelper names left right
 
-    EDivision left right ->
-      checkExprBinaryHelper names left right
+    TmDivision left right ->
+      checkTermBinaryHelper names left right
     
-    EComparison _ left right ->
-      checkExprBinaryHelper names left right
+    TmComparison _ left right ->
+      checkTermBinaryHelper names left right
     
-    EIf condition thenBranch elseBranch ->
-      checkExpr names condition
-      ++ checkExpr names thenBranch
-      ++ checkExpr names elseBranch
+    TmIf condition thenBranch elseBranch ->
+      checkTerm names condition
+      ++ checkTerm names thenBranch
+      ++ checkTerm names elseBranch
 
-    ELet (label, e1) e2 ->
-      checkExpr names e1
-      ++ checkExpr (Dict.insert label.value label names) e2
+    TmLet (label, e1) e2 ->
+      checkTerm names e1
+      ++ checkTerm (Dict.insert label.value label names) e2
 
-    EUnit ->
+    TmUnit ->
       []
     
-    ECase e variants ->
-      checkExpr names e
+    TmCase e variants ->
+      checkTerm names e
       ++ Dict.foldl
         (\_ (_, valueName, innerExpr) problems ->
-          checkExpr (Dict.insert valueName.value valueName names) innerExpr ++ problems
+          checkTerm (Dict.insert valueName.value valueName names) innerExpr ++ problems
         )
         []
         variants
+    
+    TmVariant _ value _ ->
+      checkTerm names value
 
 
-checkExprBinaryHelper : Dict String (Located String) -> Located Expr -> Located Expr -> List Problem
-checkExprBinaryHelper names left right =
-  checkExpr names left
-  ++ checkExpr names right
+checkTermBinaryHelper : Dict String (Located String) -> Located Term -> Located Term -> List Problem
+checkTermBinaryHelper names left right =
+  checkTerm names left
+  ++ checkTerm names right
 
 
-type alias Ctx
-  = List (String, Type)
-
-
-getType : Ctx -> Located Expr -> Result Problem (Located Type)
-getType ctx expr =
-  case expr.value of
-    EVariable name ->
-      case getTypeFromContext ctx name of
+getType : Ctx -> Located Term -> Result Problem (Located Type)
+getType ctx tm =
+  case tm.value of
+    TmVariable index ->
+      case getTypeFromContext ctx index of
         Nothing ->
-          case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
-            Just (TyCustom tyName _) ->
-              Err <| MisusedTypeAsVariable name tyName
-            
-            Just (TyName tyName) ->
-              Err <| MisusedTypeAsVariable name tyName
-            
-            _ ->
-              Err <| TypeError name
+          Err <| TypeError <| withLocation tm <| indexToName ctx index
 
         Just ty ->
-          Ok <| withLocation expr ty
+          Ok <| withLocation tm ty
 
-    EAbstraction boundVar boundType innerExpr ->
+    TmAbstraction boundVar boundType innerExpr ->
       let
         innerCtx =
-          addBinding ctx boundVar.value boundType.value
-        -- _ = Debug.log "AL -> boundType" <| boundType.value
-        -- _ = Debug.log "AL -> ctx" <| ctx
+          addBinding ctx boundVar.value (VarBind boundType)
       in
-      ( case boundType.value of
-        TyName name ->
-          case getTypeFromContext ctx name of
-            Just (TyFunc _ innerType) ->
-              case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
-                Just _ ->
-                  Ok (boundType, innerCtx)
-                
-                Nothing ->
-                  case innerType.value of
-                    TyCustom tyName _ ->
-                      Err <| MisusedVariantAsType name tyName
-                    
-                    _ ->
-                      Ok (boundType, innerCtx)
-            
-            Just ty ->
-              -- let
-              --   _ = Debug.log "AL -> updateBinding innerCtx name.value ty" <| updateBinding innerCtx boundVar.value ty    
-              -- in
-              Ok (withLocation boundType ty, updateBinding innerCtx boundVar.value ty)
-            
-            Nothing ->
-              case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
-                Just _ ->
-                  Ok (boundType, innerCtx)
-                
-                Nothing ->
-                  Err <| UndefinedType name
-
-        _ ->
-          Ok (boundType, innerCtx)
-      ) |>
-      Result.andThen
-      (\(nextBoundType, nextInnerCtx) ->
-      -- let
-      --   _ = Debug.log "AL -> innerExpr" <| innerExpr
-      --   _ = Debug.log "AL -> getType nextInnerCtx innerExpr" <| getType nextInnerCtx innerExpr
-      -- in
-      getType nextInnerCtx innerExpr |>
+      getType innerCtx innerExpr |>
       Result.map
       (\innerType ->
-        withLocation expr <| TyFunc nextBoundType innerType
-      )
+        withLocation tm <| TyFunc boundType innerType
       )
 
-    EApplication e1 e2 ->
+    TmApplication e1 e2 ->
       getType ctx e1 |>
       Result.andThen
       (\ty1 ->
@@ -369,7 +305,7 @@ getType ctx expr =
           case ty1.value of
             TyFunc fromType toType ->
               if areEqualTypes fromType.value ty2.value then
-                Ok <| withLocation expr <| toType.value
+                Ok <| withLocation tm <| toType.value
               else
                 Err <| MismatchedType fromType ty2
 
@@ -378,7 +314,7 @@ getType ctx expr =
         )
       )
 
-    EIf condition thenBranch elseBranch ->
+    TmIf condition thenBranch elseBranch ->
       getType ctx condition |>
       Result.andThen
       (\conditionType ->
@@ -401,29 +337,29 @@ getType ctx expr =
             Err <| ExpectingTyBool conditionType 
       )
     
-    ELet (label, e1) e2 ->
+    TmLet (label, e1) e2 ->
       getType ctx e1 |>
       Result.andThen
       (\bindingType ->
         let
           innerCtx =
-            addBinding ctx label.value bindingType.value
+            addBinding ctx label.value (VarBind bindingType)
         in
         getType innerCtx e2
       )
 
-    EPair e1 e2 ->
+    TmPair e1 e2 ->
       getType ctx e1 |>
       Result.andThen
       (\ty1 ->
         getType ctx e2 |>
         Result.andThen
         (\ty2 ->
-          Ok <| withLocation expr <| TyPair ty1 ty2
+          Ok <| withLocation tm <| TyPair ty1 ty2
         )
       )
 
-    EPairAccess pair index ->
+    TmPairAccess pair index ->
       getType ctx pair |>
       Result.andThen
       (\pairType ->
@@ -439,7 +375,7 @@ getType ctx expr =
             Err <| ExpectingTyPair pairType
       )
 
-    ERecord r ->
+    TmRecord r ->
       Dict.foldl
         (\_ (label, value) recordType ->
           recordType |>
@@ -454,9 +390,9 @@ getType ctx expr =
         )
         (Ok Dict.empty)
         r |>
-      Result.map (withLocation expr << TyRecord)
+      Result.map (withLocation tm << TyRecord)
 
-    ERecordAccess record label ->
+    TmRecordAccess record label ->
       getType ctx record |>
       Result.andThen
       (\recordType ->
@@ -473,90 +409,67 @@ getType ctx expr =
             Err <| ExpectingTyRecord recordType
       )
 
-    EAdd left right ->
-      getTypeFromBinaryInts ctx expr left right
+    TmAdd left right ->
+      getTypeFromBinaryInts ctx tm left right
 
-    ESubtract left right ->
-      getTypeFromBinaryInts ctx expr left right
+    TmSubtract left right ->
+      getTypeFromBinaryInts ctx tm left right
 
-    EMultiplication left right ->
-      getTypeFromBinaryInts ctx expr left right
+    TmMultiplication left right ->
+      getTypeFromBinaryInts ctx tm left right
 
-    EDivision left right ->
-      getTypeFromBinaryInts ctx expr left right
+    TmDivision left right ->
+      getTypeFromBinaryInts ctx tm left right
 
-    EComparison comp left right ->
+    TmComparison comp left right ->
       case comp of
         CompEQ ->
-          getTypeFromEquality ctx expr left right
+          getTypeFromEquality ctx tm left right
         
         CompNE ->
-          getTypeFromEquality ctx expr left right
+          getTypeFromEquality ctx tm left right
       
         _ ->
-          getTypeFromBinaryInts ctx expr left right |>
+          getTypeFromBinaryInts ctx tm left right |>
           Result.map
           (\intType ->
             withLocation intType <| TyBool
           )
 
-    EBool _ ->
-      Ok <| withLocation expr TyBool
+    TmBool _ ->
+      Ok <| withLocation tm TyBool
 
-    EInt _ ->
-      Ok <| withLocation expr TyInt
+    TmInt _ ->
+      Ok <| withLocation tm TyInt
 
-    EChar _ ->
-      Ok <| withLocation expr TyChar
+    TmChar _ ->
+      Ok <| withLocation tm TyChar
     
-    EUnit ->
-      Ok <| withLocation expr TyUnit
+    TmUnit ->
+      Ok <| withLocation tm TyUnit
 
-    ECase e variants ->
+    TmCase e variants ->
       getType ctx e |>
       Result.andThen
       (\exprType ->
         case exprType.value of
           TyCustom tyName tyVariants ->
-            getTypeFromVariants ctx expr tyName tyVariants variants
+            getTypeFromVariants ctx tm tyName tyVariants variants
 
-          TyName name ->
-            ( case getTypeFromContext ctx (withLocation name <| "$" ++ name.value) of
-              Just ty ->
-                Ok <| withLocation e ty
-              
-              _ ->
-                Err <| TypeError name
-            ) |>
-            Result.andThen
-            (\ty ->
-              case ty.value of
-                TyCustom tyName tyVariants ->
-                  getTypeFromVariants ctx expr tyName tyVariants variants
-
-                TyFunc _ innerType ->
-                  case innerType.value of
-                    TyCustom tyName tyVariants ->
-                      getTypeFromVariants ctx expr tyName tyVariants variants
-                    
-                    _ ->
-                      Err <| ExpectingTyCustom exprType
-
-                _ ->
-                  Err <| ExpectingTyCustom exprType
-            )
-          
           _ ->
             Err <| ExpectingTyCustom exprType
       )
+    
+    TmVariant _ _ ty -> -- TODO: maybe need to check if value has the right type
+      Ok ty
 
 
 getTypeFromVariants :
   Ctx ->
-  Located Expr ->
+  Located Term ->
   Located String ->
   Dict String (Located String, Located Type) ->
-  (Dict String (Located String, Located String, Located Expr)) ->
+  (Dict String (Located String, Located String, Located Term)) ->
   Result Problem (Located Type)
 getTypeFromVariants ctx expr customTypeName customTypeVariants variants =
   Dict.foldl
@@ -566,7 +479,7 @@ getTypeFromVariants ctx expr customTypeName customTypeVariants variants =
       (\(types, restVariants) ->
         case Dict.get variantName.value restVariants of
           Just (_, valueTy) ->
-            getType (addBinding ctx valueName.value valueTy.value) innerExpr |>
+            getType (addBinding ctx valueName.value (VarBind valueTy)) innerExpr |>
             Result.map
             (\ty ->
               ( ty :: types
@@ -608,7 +521,7 @@ getTypeFromVariants ctx expr customTypeName customTypeVariants variants =
     )
 
 
-getTypeFromEquality : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
+getTypeFromEquality : Ctx -> Located Term -> Located Term -> Located Term -> Result Problem (Located Type)
 getTypeFromEquality ctx expr left right =
   getType ctx left |>
     Result.andThen
@@ -628,7 +541,7 @@ getTypeFromEquality ctx expr left right =
     )
 
 
-getTypeFromBinaryInts : Ctx -> Located Expr -> Located Expr -> Located Expr -> Result Problem (Located Type)
+getTypeFromBinaryInts : Ctx -> Located Term -> Located Term -> Located Term -> Result Problem (Located Type)
 getTypeFromBinaryInts ctx expr left right =
   getType ctx left |>
     Result.andThen
@@ -653,10 +566,6 @@ getTypeFromBinaryInts ctx expr left right =
 
 areEqualTypes : Type -> Type -> Bool
 areEqualTypes ty1 ty2 =
-  -- let
-    -- _ = Debug.log "AL -> ty1" <| ty1
-    -- _ = Debug.log "AL -> ty2" <| ty2
-  -- in
   case (ty1, ty2) of
     (TyBool, TyBool) ->
       True
@@ -755,25 +664,30 @@ dictFoldlWhileHelper f prevResult keys dict =
           prevResult
 
 
-addBinding : Ctx -> String -> Type -> Ctx
-addBinding ctx name ty =
-  (name, ty) :: ctx
+addBinding : Ctx -> String -> Binding -> Ctx
+addBinding ctx name bind =
+  (name, bind) :: ctx
 
 
-updateBinding : Ctx -> String -> Type -> Ctx
-updateBinding ctx name ty =
-  case List.Extra.findIndex (\(n, _) -> n == name) ctx of
-    Just index ->
-      List.Extra.updateAt index (\_ -> (name, ty)) ctx
-    
-    Nothing ->
-      ctx
-
-
-getTypeFromContext : Ctx -> Located String -> Maybe Type
-getTypeFromContext ctx name =
+getBinding : Ctx -> Int -> Binding
+getBinding ctx index =
+  Maybe.withDefault fakeBinding <|
   Maybe.map Tuple.second <|
-  List.Extra.find (\(currentName, _) -> currentName == name.value) ctx
+  List.Extra.getAt index ctx
+
+
+indexToName : Ctx -> Int -> String
+indexToName ctx index =
+  Maybe.withDefault "IMPOSSIBLE VAR INDEX" <|
+  Maybe.map Tuple.first <|
+  List.Extra.getAt index ctx
+
+
+getTypeFromContext : Ctx -> Int -> Maybe Type
+getTypeFromContext ctx index =
+  case getBinding ctx index of
+    VarBind ty ->
+      Just ty.value
 
 
 showProblems : List String -> Int -> List Problem -> String
@@ -989,247 +903,3 @@ showProblemWithSingleSourceHelper src problem =
       , "General function equality is undecidable so it's not supported."
       , "Hint: Try comparing anything that is not a function."
       ]
-
-
-sortDefs : List Def -> List Def
-sortDefs defs =
-  let
-    dependencies =
-      List.foldl
-      (\def deps ->
-        case def of
-          DValue { name, expr } ->
-            Dict.insert
-            name.value
-            (Set.toList <| getFreeVariablesAndTypes expr.value)
-            deps
-          
-          DType { name, variants } ->
-            (\nextDeps ->
-              Dict.foldl
-              (\_ (label, _) resultDeps ->
-                Dict.insert label.value [] resultDeps
-              )
-              nextDeps
-              variants
-            ) <|
-            Dict.insert
-            name.value
-            (List.concat <|
-              List.map (\(_, (_, ty)) -> List.map .value <| getFreeTypes ty.value) <|
-              Dict.toList variants
-            )
-            deps
-          
-          DAlias { name, ty } ->
-            Dict.insert
-            name.value
-            (List.map .value <| getFreeTypes ty.value)
-            deps
-      )
-      Dict.empty
-      defs
-    
-    -- _ = Debug.log "AL -> dependencies" <| dependencies
-    
-    sortedNames =
-      sortDependencies dependencies
-    -- _ = Debug.log "AL -> sortedNames" <| sortedNames
-  in
-  List.filterMap
-  identity <|
-  List.map
-  (\name ->
-    List.Extra.find
-      (\def ->
-        (getDefName def).value == name
-      )
-      defs
-  )
-  sortedNames
-
-
-getFreeTypes : Type -> List (Located String)
-getFreeTypes ty =
-  case ty of
-    TyName label ->
-      [ label ]
-    
-    TyCustom name variants ->
-      [ name ]
-      -- ++ Dict.foldl
-      -- (\_ (label, _) labels ->
-      --   label :: labels
-      -- )
-      -- []
-      -- variants
-    
-    TyPair left right ->
-      getFreeTypes left.value
-      ++ getFreeTypes right.value
-    
-    TyRecord r ->
-      Dict.foldl
-        (\_ (_, valueType) types ->
-          getFreeTypes valueType.value ++ types
-        )
-        []
-        r
-
-    TyFunc boundType innerType ->
-      getFreeTypes boundType.value
-      ++ getFreeTypes innerType.value
-    
-    _ ->
-      []
-
-
-getFreeVariablesAndTypes : Expr -> Set String
-getFreeVariablesAndTypes expr =
-  getFreeVariablesAndTypesHelper Set.empty expr
-
-
-getFreeVariablesAndTypesHelper : Set String -> Expr -> Set String
-getFreeVariablesAndTypesHelper boundVariables expr =
-  case expr of
-    EVariable name ->
-      if Set.member name.value boundVariables then
-        Set.empty
-      else
-        Set.singleton name.value 
-    
-    EAbstraction boundVar boundType innerExpr ->
-      Set.union
-      ( case boundType.value of
-        TyName label ->
-          Set.singleton label.value
-        
-        TyCustom name _ ->
-          Set.singleton name.value
-        
-        _ ->
-          Set.empty
-      )
-      (getFreeVariablesAndTypesHelper (Set.insert boundVar.value boundVariables) innerExpr.value)
-    
-    EApplication func arg ->
-      Set.union
-      (getFreeVariablesAndTypesHelper boundVariables func.value)
-      (getFreeVariablesAndTypesHelper boundVariables arg.value)
-
-    EBool _ ->
-      Set.empty
-    
-    EInt _ ->
-      Set.empty
-
-    EChar _ ->
-      Set.empty
-
-    EUnit ->
-      Set.empty
-
-    EPair e1 e2 ->
-      getFreeVariablesBinaryHelper boundVariables e1 e2
-
-    EPairAccess pair _ ->
-      getFreeVariablesAndTypesHelper boundVariables pair.value
-
-    ERecord r ->
-      Dict.foldl
-        (\_ (_, value) freeVars ->
-          Set.union
-          (getFreeVariablesAndTypesHelper boundVariables value.value)
-          freeVars
-        )
-        Set.empty
-        r
-
-    ERecordAccess record _ ->
-      getFreeVariablesAndTypesHelper boundVariables record.value
-
-    EAdd left right ->
-      getFreeVariablesBinaryHelper boundVariables left right
-
-    ESubtract left right ->
-      getFreeVariablesBinaryHelper boundVariables left right
-
-    EMultiplication left right ->
-      getFreeVariablesBinaryHelper boundVariables left right
-
-    EDivision left right ->
-      getFreeVariablesBinaryHelper boundVariables left right
-    
-    EComparison _ left right ->
-      getFreeVariablesBinaryHelper boundVariables left right
-
-    EIf condition thenBranch elseBranch ->
-      Set.union
-      (getFreeVariablesAndTypesHelper boundVariables condition.value)
-      ( Set.union
-        (getFreeVariablesAndTypesHelper boundVariables thenBranch.value)
-        (getFreeVariablesAndTypesHelper boundVariables elseBranch.value)
-      )
-
-    ELet (label, e1) e2 ->
-      Set.union
-      (getFreeVariablesAndTypesHelper boundVariables e1.value)
-      (getFreeVariablesAndTypesHelper (Set.insert label.value boundVariables) e2.value)
-  
-    ECase e variants ->
-      Set.union
-      (getFreeVariablesAndTypesHelper boundVariables e.value)
-      ( Dict.foldl
-        (\_ (_, valueName, innerExpr) set ->
-          Set.union
-          ( getFreeVariablesAndTypesHelper
-            (Set.insert valueName.value boundVariables)
-            innerExpr.value
-          )
-          set
-        )
-        Set.empty
-        variants
-      )
-
-
-getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> Set String
-getFreeVariablesBinaryHelper boundVariables left right =
-  Set.union
-  (getFreeVariablesAndTypesHelper boundVariables left.value)
-  (getFreeVariablesAndTypesHelper boundVariables right.value)
-
-
-type alias Dependencies =
-  Dict String (List String)
-
-
-sortDependencies : Dependencies -> List String
-sortDependencies dep =
-  let
-    (result, _, _) =
-      sortDependenciesHelper ([], Set.empty, dep)
-  in
-  List.reverse result
-  
-
-sortDependenciesHelper : (List String, Set String, Dependencies) -> (List String, Set String, Dependencies)
-sortDependenciesHelper (result0, used0, dep0) =
-  let
-    (result1, used1, dep1) =
-      Dict.foldl
-      (\k v (result, used, dep) ->
-        if List.all (\value -> Set.member value used) v then
-          (k :: result, Set.insert k used, Dict.filter (\k1 _ -> k /= k1) dep)
-        else
-          (result, used, dep)
-      )
-      (result0, used0, dep0)
-      dep0
-  in
-  if Dict.isEmpty dep1 then
-    (result1, used1, dep1)
-  else if Dict.size dep0 == Dict.size dep1 then
-    ((List.reverse <| Dict.keys dep1) ++ result1, used1, dep1)
-  else
-    sortDependenciesHelper (result1, used1, dep1)

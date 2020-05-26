@@ -1,11 +1,9 @@
 module LambdaEvaluator exposing (evalDefs, evalDef, EvalStrategy(..))
 
 
-import Dict exposing (Dict)
-import LambdaParser exposing (showExpr, fakeDef, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
-import LambdaChecker exposing (sortDefs, getDefName)
-import Location exposing (withLocation, fakeLocated, Located)
-import List.Extra
+import LambdaParser exposing (termShift, termSubst, Def(..), Term(..), Type(..), Comparison(..), PairIndex(..))
+import Location exposing (withLocation, Located)
+import Dict
 
 
 type EvalStrategy
@@ -15,518 +13,53 @@ type EvalStrategy
 
 
 evalDefs : EvalStrategy -> List Def -> List Def
-evalDefs strategy defs =
-  let
-    sortedDefs =
-      sortDefs defs
-    
-    resultSortedDefs =
-      Tuple.first <|
-      List.foldl
-        (\def (resultDefs, ctx) ->
-          let
-            resultDef =
-              internalEvalDef strategy ctx def
-            -- _ = Debug.log "AL -> ctx" <| ctx
-          in
-          case resultDef of
-            DValue { name, expr } ->
-              ( Dict.insert name.value resultDef resultDefs
-              , Dict.insert name.value (exprToTerm ctx expr) ctx
-              )
-            
-            DType { name, variants } ->
-              ( Dict.insert name.value resultDef resultDefs
-              , Dict.foldl
-                (\_ (label, ty) nextCtx ->
-                  let
-                    _ = Debug.log "AL -> label" <| label
-                  in
-                  ( withLocation label <|
-                    TmAbstraction
-                    (withLocation ty <| "$variant")
-                    ty
-                    (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
-                  ) |>
-                  (\tm ->
-                    Dict.insert label.value tm nextCtx
-                  )
-                )
-                ctx
-                variants
-              )
-            
-            DAlias { name, ty } ->
-              ( Dict.insert name.value resultDef resultDefs
-              , ctx
-              )
-        )
-        (Dict.empty, Dict.empty)
-        sortedDefs
-  in
-  -- return in the original order, not in the dependency order
+evalDefs strategy sortedDefs =
   List.map
     (\def ->
-      let
-        name =
-          getDefName def
-      in
-      Maybe.withDefault fakeDef <| -- impossible
-      Dict.get name.value resultSortedDefs
+      internalEvalDef strategy def
     )
-    defs
+    sortedDefs
 
 
 evalDef : EvalStrategy -> List Def -> Def -> Def
 evalDef strategy otherDefs def =
-  let
-    resultCtx =
-      List.foldl
-        (\otherDef ctx ->
-          case otherDef of
-            DValue { name, expr } ->
-              Dict.insert name.value (exprToTerm ctx expr) ctx
-            
-            DType { name, variants } ->
-              Dict.foldl
-                (\_ (label, ty) nextCtx ->
-                  ( withLocation label <|
-                    TmAbstraction
-                    (withLocation ty <| "$variant")
-                    (withLocation name <| TyName name)
-                    (withLocation label <| TmVariant label (withLocation ty <| TmVariable 0))
-                  ) |>
-                  (\tm ->
-                    Dict.insert name.value tm nextCtx
-                  )
-                )
-                ctx
-                variants
-            
-            DAlias { name, ty } ->
-              ctx
-        )
-        Dict.empty
-        otherDefs
-  in
-  internalEvalDef strategy resultCtx def
+  internalEvalDef strategy  def
 
 
-internalEvalDef : EvalStrategy -> Ctx -> Def -> Def
-internalEvalDef strategy ctx def =
+internalEvalDef : EvalStrategy -> Def -> Def
+internalEvalDef strategy def =
   case def of
-    DValue { name, expr } ->
+    DValue { name, term } ->
       DValue
         { name =
           name
-        , expr =
-          evalExpr strategy ctx expr
+        , term =
+          evalTerm strategy term
         }
     
     _ ->
       def
 
 
-type Term
-  = TmVariable Int
-  | TmAbstraction (Located String) (Located Type) (Located Term)
-  | TmApplication (Located Term) (Located Term)
-  | TmVariant (Located String) (Located Term)
-  | TmBool Bool
-  | TmInt Int
-  | TmChar Char
-  | TmUnit
-  | TmPair (Located Term) (Located Term)
-  | TmPairAccess (Located Term) (Located PairIndex)
-  | TmRecord (Dict String (Located String, Located Term))
-  | TmRecordAccess (Located Term) (Located String)
-  | TmIf (Located Term) (Located Term) (Located Term)
-  | TmAdd (Located Term) (Located Term)
-  | TmSubtract (Located Term) (Located Term)
-  | TmMultiplication (Located Term) (Located Term)
-  | TmDivision (Located Term) (Located Term)
-  | TmComparison Comparison (Located Term) (Located Term)
-  | TmLet (Located String, Located Term) (Located Term)
-  | TmCase (Located Term) (Dict String (Located String, Located String, Located Term))
-
-
-type alias Ctx =
-  Dict String (Located Term)
-
-
-evalExpr : EvalStrategy -> Ctx -> Located Expr -> Located Expr
-evalExpr strategy ctx expr =
-  let
-    term =
-      exprToTerm ctx expr
-  in
-  termToExpr [] <|
+evalTerm : EvalStrategy -> Located Term -> Located Term
+evalTerm strategy term =
   case strategy of
     CallByName ->
-      evalTermCallByName ctx term
+      evalTermCallByName term
 
     CallByValue ->
-      evalTermCallByValue ctx term
+      evalTermCallByValue term
     
     FullEvaluation ->
-      evalTermFull ctx term
+      evalTermFull term
 
 
-termToExpr : List String -> Located Term -> Located Expr
-termToExpr names t =
-  withLocation t <|
-  case t.value of
-    TmVariable index ->
-      EVariable <| withLocation t <| Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
-    
-    TmAbstraction boundVar boundType t1 ->
-      if boundVar.value == "$variant" then
-        case t1.value of
-          TmVariant variantName _ ->
-            EVariable variantName
-          
-          _ ->
-            EVariable (fakeLocated "IMPOSSIBLE")
-      else
-        let
-          (newNames, newBoundVar) =
-            pickNewName names boundVar
-        in
-        EAbstraction newBoundVar boundType <| termToExpr newNames t1
-  
-    TmApplication t1 t2 ->
-      EApplication (termToExpr names t1) (termToExpr names t2)
-
-    TmIf condition thenBranch elseBranch ->
-      EIf
-      (termToExpr names condition)
-      (termToExpr names thenBranch)
-      (termToExpr names elseBranch)
-
-    TmLet (label, tm1) tm2 ->
-      let
-        _ = Debug.log "AL -> label" <| label.value
-        _ = Debug.log "AL -> newNames" <| newNames
-        (newNames, newLabel) =
-          pickNewName names label
-      in
-      ELet
-      (newLabel, termToExpr names tm1)
-      (termToExpr newNames tm2)
-
-    TmCase e variants ->
-      ECase
-      (termToExpr names e)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          let
-            (newNames, newValueName) =
-              pickNewName names valueName
-          in
-          (variantName, newValueName, termToExpr newNames innerTerm)
-        )
-        variants
-      )
-
-    TmVariant variantName value ->
-      EApplication
-      (withLocation variantName <| EVariable variantName)
-      (termToExpr names value)
-
-    TmPair t1 t2 ->
-      termToExprBinaryHelper names EPair t1 t2
-    
-    TmPairAccess pair index ->
-      EPairAccess (termToExpr names pair) index
-
-    TmRecord r ->
-      ERecord <|
-      Dict.map
-        (\_ (label, value) ->
-          (label, termToExpr names value)
-        )
-        r
-
-    TmRecordAccess record label ->
-      ERecordAccess (termToExpr names record) label
-
-    TmAdd left right ->
-      termToExprBinaryHelper names EAdd left right
-
-    TmSubtract left right ->
-      termToExprBinaryHelper names ESubtract left right
-
-    TmMultiplication left right ->
-      termToExprBinaryHelper names EMultiplication left right
-
-    TmDivision left right ->
-      termToExprBinaryHelper names EDivision left right
-
-    TmComparison comp left right ->
-      termToExprBinaryHelper names (EComparison comp) left right
-    
-    TmBool bool ->
-      EBool bool
-
-    TmInt int ->
-      EInt int
-    
-    TmChar char ->
-      EChar char
-    
-    TmUnit ->
-      EUnit
-
-
-termToExprBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
-termToExprBinaryHelper names f left right =
-  f
-    (termToExpr names left)
-    (termToExpr names right)
-
-
--- show de brujin index instead of transforming to names
-termToExprDebug : List String -> Located Term -> Located Expr
-termToExprDebug names t =
-  withLocation t <|
-  case t.value of
-    TmVariable index ->
-      EVariable <| withLocation t <| String.fromInt index
-    
-    TmAbstraction boundVar boundType t1 ->
-      EAbstraction (withLocation boundVar "") boundType <| termToExprDebug names t1
-  
-    TmApplication t1 t2 ->
-      EApplication (termToExprDebug names t1) (termToExprDebug names t2)
-
-    TmIf condition thenBranch elseBranch ->
-      EIf
-      (termToExprDebug names condition)
-      (termToExprDebug names thenBranch)
-      (termToExprDebug names elseBranch)
-
-    TmLet (label, tm1) tm2 ->
-      ELet
-      (label, termToExprDebug names tm1)
-      (termToExprDebug names tm2)
-
-    TmCase e variants ->
-      ECase
-      (termToExprDebug names e)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          let
-            (newNames, newValueName) =
-              pickNewName names valueName
-          in
-          (variantName, newValueName, termToExprDebug newNames innerTerm)
-        )
-        variants
-      )
-
-    TmVariant variantName value ->
-      EApplication
-      (withLocation variantName <| EVariable variantName)
-      (termToExprDebug names value)
-
-    TmPair t1 t2 ->
-      termToExprDebugBinaryHelper names EPair t1 t2
-    
-    TmPairAccess pair index ->
-      EPairAccess (termToExprDebug names pair) index
-    
-    TmRecord r ->
-      ERecord <|
-        Dict.map
-          (\_ (label, value) ->
-            (label, termToExprDebug names value)
-          )
-          r
-
-    TmRecordAccess record label ->
-      ERecordAccess (termToExprDebug names record) label
-
-    TmAdd left right ->
-      termToExprDebugBinaryHelper names EAdd left right
-      
-    TmSubtract left right ->
-      termToExprDebugBinaryHelper names ESubtract left right
-    
-    TmMultiplication left right ->
-      termToExprDebugBinaryHelper names EMultiplication left right
-    
-    TmDivision left right ->
-      termToExprDebugBinaryHelper names EDivision left right
-
-    TmComparison comp left right ->
-      termToExprDebugBinaryHelper names (EComparison comp) left right
-    
-    TmBool bool ->
-      EBool bool
-
-    TmInt int ->
-      EInt int
-    
-    TmChar char ->
-      EChar char
-
-    TmUnit ->
-      EUnit
-
-
-termToExprDebugBinaryHelper : List String -> (Located Expr -> Located Expr -> Expr) -> Located Term -> Located Term -> Expr
-termToExprDebugBinaryHelper names f left right =
-  f
-    (termToExprDebug names left)
-    (termToExprDebug names right)
-
-
-showTermDebug : Term -> String
-showTermDebug tm =
-  showExpr <| .value <| termToExprDebug [] <| fakeLocated tm
-
-
-pickNewName : List String -> Located String -> (List String, Located String)
-pickNewName names boundVar =
+evalTermCallByValue : Located Term -> Located Term
+evalTermCallByValue t0 =
   let
-    newName =
-      if List.member boundVar.value names then
-        boundVar.value ++ (String.fromInt <| List.length names)
-      else
-        boundVar.value
-  in
-  ( newName :: names
-  , withLocation boundVar newName
-  )
-
-
-exprToTerm : Ctx -> Located Expr -> Located Term
-exprToTerm ctx expr =
-  withLocation expr <|
-  case expr.value of
-    EVariable name ->
-      case Dict.get name.value ctx of
-        Nothing -> -- impossible
-          TmVariable -1
-        
-        Just s ->
-          s.value
-
-    EAbstraction boundVar boundType e1 ->
-      let
-        newCtx =
-          ctx |>
-          Dict.map (\_ s -> termShift 1 0 s) |>
-          Dict.insert boundVar.value (withLocation boundVar <| TmVariable 0)
-      in
-      TmAbstraction boundVar boundType <| exprToTerm newCtx e1
-
-    EApplication e1 e2 ->
-      TmApplication
-      (exprToTerm ctx e1)
-      (exprToTerm ctx e2)
-
-    EIf condition thenBranch elseBranch ->
-      TmIf
-      (exprToTerm ctx condition)
-      (exprToTerm ctx thenBranch)
-      (exprToTerm ctx elseBranch)
-
-    ELet (label, e1) e2 ->
-      let
-        innerCtx =
-          ctx |>
-          Dict.map (\_ s -> termShift 1 0 s) |>
-          Dict.insert label.value (withLocation label <| TmVariable 0)
-        
-        -- _ = Debug.log "AL -> ctx" <| ctx
-
-        -- _ = Debug.log "AL -> innerCtx" <| innerCtx
-        
-        -- _ = Debug.log "AL -> exprToTerm innerCtx e2" <| showTermDebug <| .value <| exprToTerm innerCtx e2
-      in
-      TmLet
-      (label, exprToTerm ctx e1)
-      (exprToTerm innerCtx e2)
-
-    ECase e variants ->
-      TmCase
-      (exprToTerm ctx e)
-      ( Dict.map
-        (\_ (variantName, valueName, innerExpr) ->
-          let
-            innerCtx =
-              ctx |>
-              Dict.map (\_ s -> termShift 1 0 s) |>
-              Dict.insert valueName.value (withLocation valueName <| TmVariable 0)
-          in
-          (variantName, valueName, exprToTerm innerCtx innerExpr)
-        )
-        variants
-      )
-
-    EPair e1 e2 ->
-      exprToTermBinaryHelper ctx TmPair e1 e2
-
-    EPairAccess pair index ->
-      TmPairAccess
-      (exprToTerm ctx pair)
-      index
-    
-    ERecord r ->
-      TmRecord <|
-        Dict.map
-          (\_ (label, value) ->
-            (label, exprToTerm ctx value)
-          )
-          r
-
-    ERecordAccess record label ->
-      TmRecordAccess
-      (exprToTerm ctx record)
-      label
-
-    EAdd left right ->
-      exprToTermBinaryHelper ctx TmAdd left right
-
-    ESubtract left right ->
-      exprToTermBinaryHelper ctx TmSubtract left right
-
-    EMultiplication left right ->
-      exprToTermBinaryHelper ctx TmMultiplication left right
-
-    EDivision left right ->
-      exprToTermBinaryHelper ctx TmDivision left right
-
-    EComparison comp left right ->
-      exprToTermBinaryHelper ctx (TmComparison comp) left right
-
-    EBool bool ->
-      TmBool bool
-
-    EInt int ->
-      TmInt int
-    
-    EChar char ->
-      TmChar char
-    
-    EUnit ->
-      TmUnit
-
-
-exprToTermBinaryHelper : Ctx -> (Located Term -> Located Term -> Term) -> Located Expr -> Located Expr -> Term
-exprToTermBinaryHelper ctx f left right =
-  f
-    (exprToTerm ctx left)
-    (exprToTerm ctx right)
-
-
-evalTermCallByValue : Ctx -> Located Term -> Located Term
-evalTermCallByValue ctx0 t0 =
-  let
-    eval : Int -> Ctx -> Located Term -> Located Term
-    eval iterations ctx t =
-      case evalTermCallByValueHelper ctx t of
+    eval : Int -> Located Term -> Located Term
+    eval iterations t =
+      case evalTermCallByValueHelper t of
         Err _ ->
           t
         
@@ -534,13 +67,13 @@ evalTermCallByValue ctx0 t0 =
           if iterations >= 10000 then
             t2
           else
-            eval (iterations + 1) ctx t2
+            eval (iterations + 1) t2
   in
-  eval 0 ctx0 t0
+  eval 0 t0
 
 
-evalTermCallByValueHelper : Ctx -> Located Term -> Result () (Located Term)
-evalTermCallByValueHelper ctx t =
+evalTermCallByValueHelper : Located Term -> Result () (Located Term)
+evalTermCallByValueHelper t =
   case t.value of
     TmApplication t1 t2 ->
       if isValue t2 then
@@ -549,34 +82,34 @@ evalTermCallByValueHelper ctx t =
             Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
           
           _ ->
-            evalTermCallByValueHelper ctx t1 |>
+            evalTermCallByValueHelper t1 |>
             Result.map
             (\newT1 ->
               withLocation t <| TmApplication newT1 t2
             )
       else if isValue t1 then
-        evalTermCallByValueHelper ctx t2 |>
+        evalTermCallByValueHelper t2 |>
         Result.map
         (\newT2 ->
           withLocation t <| TmApplication t1 newT2
         )
       else
-        evalTermCallByValueHelper ctx t1 |>
+        evalTermCallByValueHelper t1 |>
         Result.map
         (\newT1 ->
           withLocation t <| TmApplication newT1 t2
         )
 
     _ ->
-      commonEval evalTermCallByValueHelper ctx t
+      commonEval evalTermCallByValueHelper t
 
 
-evalTermCallByName : Ctx -> Located Term -> Located Term
-evalTermCallByName ctx0 t0 =
+evalTermCallByName : Located Term -> Located Term
+evalTermCallByName t0 =
   let
-    eval : Int -> Ctx -> Located Term -> Located Term
-    eval iterations ctx t =
-      case evalTermCallByNameHelper ctx t of
+    eval : Int -> Located Term -> Located Term
+    eval iterations t =
+      case evalTermCallByNameHelper t of
         Err _ ->
           t
         
@@ -584,13 +117,13 @@ evalTermCallByName ctx0 t0 =
           if iterations >= 10000 then
             t2
           else
-            eval (iterations + 1) ctx t2
+            eval (iterations + 1) t2
   in
-  eval 0 ctx0 t0
+  eval 0 t0
 
 
-evalTermCallByNameHelper : Ctx -> Located Term -> Result () (Located Term)
-evalTermCallByNameHelper ctx t =
+evalTermCallByNameHelper : Located Term -> Result () (Located Term)
+evalTermCallByNameHelper t =
   case t.value of
     TmApplication t1 t2 ->
       if isValue t2 then
@@ -599,28 +132,28 @@ evalTermCallByNameHelper ctx t =
             Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 t2) t12)
           
           _ ->
-            evalTermCallByNameHelper ctx t1 |>
+            evalTermCallByNameHelper t1 |>
             Result.map
             (\newT1 ->
               withLocation t <| TmApplication newT1 t2
             )
       else
-        evalTermCallByNameHelper ctx t1 |>
+        evalTermCallByNameHelper t1 |>
         Result.map
         (\newT1 ->
           withLocation t <| TmApplication newT1 t2
         )
 
     _ ->
-      commonEval evalTermCallByNameHelper ctx t
+      commonEval evalTermCallByNameHelper t
 
 
-evalTermFull : Ctx -> Located Term -> Located Term
-evalTermFull ctx0 t0 =
+evalTermFull : Located Term -> Located Term
+evalTermFull t0 =
   let
-    eval : Int -> Ctx -> Located Term -> Located Term
-    eval iterations ctx t =
-      case evalTermFullHelper ctx t of
+    eval : Int -> Located Term -> Located Term
+    eval iterations t =
+      case evalTermFullHelper t of
         Err _ ->
           t
         
@@ -628,13 +161,13 @@ evalTermFull ctx0 t0 =
           if iterations >= 10000 then
             t2
           else
-            eval (iterations + 1) ctx t2
+            eval (iterations + 1) t2
   in
-  eval 0 ctx0 t0
+  eval 0 t0
 
 
-evalTermFullHelper : Ctx -> Located Term -> Result () (Located Term)
-evalTermFullHelper ctx t =
+evalTermFullHelper : Located Term -> Result () (Located Term)
+evalTermFullHelper t =
   case t.value of
     TmApplication t1 t2 ->
       case t1.value of
@@ -644,37 +177,37 @@ evalTermFullHelper ctx t =
         _ ->
           let
             a =
-              Result.withDefault t1 <| evalTermFullHelper ctx t1
+              Result.withDefault t1 <| evalTermFullHelper t1
             
             b =
-              Result.withDefault t2 <| evalTermFullHelper ctx t2
+              Result.withDefault t2 <| evalTermFullHelper t2
           in
           Ok <| withLocation t <| TmApplication a b
     
     TmAbstraction boundVar boundType t1 ->
-      evalTermFullHelper ctx t1 |>
+      evalTermFullHelper t1 |>
       Result.map
       (\newT1 ->
         withLocation t <| TmAbstraction boundVar boundType newT1
       )
       
     _ ->
-      commonEval evalTermFullHelper ctx t
+      commonEval evalTermFullHelper t
 
 
-commonEval : (Ctx -> Located Term -> Result () (Located Term)) -> Ctx -> Located Term -> Result () (Located Term)
-commonEval f ctx tm =
+commonEval : (Located Term -> Result () (Located Term)) -> Located Term -> Result () (Located Term)
+commonEval f tm =
   case tm.value of
     TmIf condition thenBranch elseBranch ->
       case condition.value of
         TmBool bool ->
           if bool then
-            Ok <| Result.withDefault thenBranch <| f ctx thenBranch
+            Ok <| Result.withDefault thenBranch <| f thenBranch
           else
-            Ok <| Result.withDefault elseBranch <| f ctx elseBranch
+            Ok <| Result.withDefault elseBranch <| f elseBranch
 
         _ ->
-          f ctx condition |>
+          f condition |>
           Result.map
           (\newCondition ->
             withLocation tm <| TmIf newCondition thenBranch elseBranch
@@ -692,7 +225,7 @@ commonEval f ctx tm =
         -- Ok <| termSubst 0 tm1 tm2
         Ok <| termShift -1 0 (termSubst 0 (termShift 1 0 tm1) tm2)
       else
-        f ctx tm1 |>
+        f tm1 |>
         Result.map
         (\newTm1 ->
           withLocation tm <| TmLet (label, newTm1) tm2
@@ -700,7 +233,7 @@ commonEval f ctx tm =
 
     TmCase tm1 variants ->
       case tm1.value of
-        TmVariant variantName value ->
+        TmVariant variantName value _ ->
           if isValue value then
             case Dict.get variantName.value variants of
               Just (_, _, tm2) ->
@@ -709,46 +242,46 @@ commonEval f ctx tm =
               Nothing ->
                 Err ()
           else
-            f ctx tm1 |>
+            f tm1 |>
             Result.map
             (\newTm1 ->
               withLocation tm <| TmCase newTm1 variants
             )
         
         _ ->
-          f ctx tm1 |>
+          f tm1 |>
           Result.map
           (\newTm1 ->
             withLocation tm <| TmCase newTm1 variants
           )
     
-    TmVariant variantName value ->
-      f ctx value |>
+    TmVariant variantName value customType ->
+      f value |>
       Result.map
       (\newValue ->
-        withLocation tm <| TmVariant variantName newValue
+        withLocation tm <| TmVariant variantName newValue customType
       )
 
 
     TmAdd left right ->
-      commonEvalBinaryIntsHelper f ctx tm TmAdd (+) left right
+      commonEvalBinaryIntsHelper f tm TmAdd (+) left right
     
     TmSubtract left right ->
-      commonEvalBinaryIntsHelper f ctx tm TmSubtract (-) left right
+      commonEvalBinaryIntsHelper f tm TmSubtract (-) left right
 
     TmMultiplication left right ->
-      commonEvalBinaryIntsHelper f ctx tm TmMultiplication (*) left right
+      commonEvalBinaryIntsHelper f tm TmMultiplication (*) left right
 
     TmDivision left right ->
-      commonEvalBinaryIntsHelper f ctx tm TmDivision (//) left right
+      commonEvalBinaryIntsHelper f tm TmDivision (//) left right
     
     TmComparison comp left right ->
       case comp of
         CompEQ ->
-          commonEvalEqualityHelper f ctx tm (TmComparison comp) areEqualTerms left right
+          commonEvalEqualityHelper f tm (TmComparison comp) areEqualTerms left right
         
         CompNE ->
-          commonEvalEqualityHelper f ctx tm (TmComparison comp) (\tm1 tm2 -> not <| areEqualTerms tm1 tm2) left right
+          commonEvalEqualityHelper f tm (TmComparison comp) (\tm1 tm2 -> not <| areEqualTerms tm1 tm2) left right
 
         _ ->
           let
@@ -766,19 +299,19 @@ commonEval f ctx tm =
                 _ ->
                   (>=)
           in
-          commonEvalComparisonIntsHelper f ctx tm (TmComparison comp) compFunc left right
+          commonEvalComparisonIntsHelper f tm (TmComparison comp) compFunc left right
 
     TmPair tm1 tm2 ->
       if isValue tm then
         Err ()
       else if isValue tm1 then
-        f ctx tm2 |>
+        f tm2 |>
         Result.map
         (\newTm2 ->
           withLocation tm <| TmPair tm1 newTm2
         )
       else
-        f ctx tm1 |>
+        f tm1 |>
         Result.map
         (\newTm1 ->
           withLocation tm <| TmPair newTm1 tm2
@@ -795,14 +328,14 @@ commonEval f ctx tm =
               PairIndexTwo ->
                 Ok tm2
           else
-            f ctx pair |>
+            f pair |>
             Result.map
             (\newPair ->
               withLocation tm <| TmPairAccess newPair index
             )
 
         _ ->
-          f ctx pair |>
+          f pair |>
             Result.map
             (\newPair ->
               withLocation tm <| TmPairAccess newPair index
@@ -821,7 +354,7 @@ commonEval f ctx tm =
               (label, value)
             else
               (label
-              , case f ctx value of
+              , case f value of
                 Ok nextValue ->
                   nextValue
                 Err _ ->
@@ -844,7 +377,7 @@ commonEval f ctx tm =
           _ ->
             Err ()
       else
-        f ctx record |>
+        f record |>
           Result.map
           (\newRecord ->
             withLocation tm <| TmRecordAccess newRecord label
@@ -890,7 +423,7 @@ areEqualTerms tm1 tm2 =
       else
         False
     
-    (TmVariant n1 v1, TmVariant n2 v2) ->
+    (TmVariant n1 v1 _, TmVariant n2 v2 _) ->
       (n1.value == n2.value)
       && areEqualTerms v1.value v2.value
     
@@ -898,25 +431,24 @@ areEqualTerms tm1 tm2 =
       False
 
 commonEvalEqualityHelper :
-  (Ctx -> Located Term -> Result () (Located Term))
-  -> Ctx
+  (Located Term -> Result () (Located Term))
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Term -> Term -> Bool)
   -> Located Term
   -> Located Term
   -> Result () (Located Term)
-commonEvalEqualityHelper f ctx tm tmName op left right =
+commonEvalEqualityHelper f tm tmName op left right =
   if isValue left && isValue right then
     Ok <| withLocation tm <| TmBool <| op left.value right.value
   else if isValue left then
-    f ctx right |>
+    f right |>
     Result.map
     (\newRight ->
       withLocation tm <| tmName left newRight
     )
   else
-    f ctx left |>
+    f left |>
     Result.map
     (\newLeft ->
       withLocation tm <| tmName newLeft right
@@ -924,15 +456,14 @@ commonEvalEqualityHelper f ctx tm tmName op left right =
 
 
 commonEvalComparisonIntsHelper :
-  (Ctx -> Located Term -> Result () (Located Term))
-  -> Ctx
+  (Located Term -> Result () (Located Term))
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Int -> Int -> Bool)
   -> Located Term
   -> Located Term
   -> Result () (Located Term)
-commonEvalComparisonIntsHelper f ctx tm tmName op left right =
+commonEvalComparisonIntsHelper f tm tmName op left right =
   case left.value of
     TmInt leftValue ->
       case right.value of
@@ -940,14 +471,14 @@ commonEvalComparisonIntsHelper f ctx tm tmName op left right =
           Ok <| withLocation tm <| TmBool <| op leftValue rightValue
         
         _ ->
-          f ctx right |>
+          f right |>
           Result.map
           (\newRight ->
             withLocation tm <| tmName left newRight
           )
 
     _ ->
-      f ctx left |>
+      f left |>
       Result.map
       (\newLeft ->
         withLocation tm <| tmName newLeft right
@@ -955,15 +486,14 @@ commonEvalComparisonIntsHelper f ctx tm tmName op left right =
 
 
 commonEvalBinaryIntsHelper :
-  (Ctx -> Located Term -> Result () (Located Term))
-  -> Ctx
+  (Located Term -> Result () (Located Term))
   -> Located Term
   -> (Located Term -> Located Term -> Term)
   -> (Int -> Int -> Int)
   -> Located Term
   -> Located Term
   -> Result () (Located Term)
-commonEvalBinaryIntsHelper f ctx tm tmName op left right =
+commonEvalBinaryIntsHelper f tm tmName op left right =
   case left.value of
     TmInt leftValue ->
       case right.value of
@@ -971,14 +501,14 @@ commonEvalBinaryIntsHelper f ctx tm tmName op left right =
           Ok <| withLocation tm <| TmInt <| op leftValue rightValue
         
         _ ->
-          f ctx right |>
+          f right |>
           Result.map
           (\newRight ->
             withLocation tm <| tmName left newRight
           )
 
     _ ->
-      f ctx left |>
+      f left |>
       Result.map
       (\newLeft ->
         withLocation tm <| tmName newLeft right
@@ -1013,199 +543,8 @@ isValue t =
       )
       (Dict.toList r)
 
-    TmVariant _ value ->
+    TmVariant _ value _ ->
       isValue value
     
     _ ->
       False
-
-
-termShift : Int -> Int -> Located Term -> Located Term
-termShift d c t =
-  withLocation t <|
-  case t.value of
-    TmVariable k ->
-      if k < c then
-        TmVariable k
-      else
-        TmVariable <| k + d
-    
-    TmAbstraction boundVar boundType t1 ->
-      TmAbstraction boundVar boundType <| termShift d (c + 1) t1
-
-    TmApplication t1 t2 ->
-      TmApplication (termShift d c t1) (termShift d c t2)
-
-    TmIf condition thenBranch elseBranch ->
-      TmIf
-      (termShift d c condition)
-      (termShift d c thenBranch)
-      (termShift d c elseBranch)
-
-    TmLet (label, tm1) tm2 ->
-      TmLet
-      (label, termShift d c tm1)
-      (termShift d (c + 1) tm2)
-    
-    TmCase tm variants ->
-      TmCase
-      (termShift d c tm)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          (variantName, valueName, termShift d (c + 1) innerTerm)
-        )
-        variants
-      )
-    
-    TmVariant variantName value ->
-      TmVariant
-      variantName
-      (termShift d c value)
-
-    TmPair t1 t2 ->
-      termShiftBinaryHelper d c TmPair t1 t2
-
-    TmPairAccess pair index ->
-      TmPairAccess (termShift d c pair) index
-
-    TmRecord r ->
-      TmRecord <|
-      Dict.map
-        (\_ (label, value) ->
-          (label, termShift d c value)
-        )
-        r
-
-    TmRecordAccess record label ->
-      TmRecordAccess (termShift d c record) label
-
-    TmAdd left right ->
-      termShiftBinaryHelper d c TmAdd left right
-
-    TmSubtract left right ->
-      termShiftBinaryHelper d c TmSubtract left right
-
-    TmMultiplication left right ->
-      termShiftBinaryHelper d c TmMultiplication left right
-
-    TmDivision left right ->
-      termShiftBinaryHelper d c TmDivision left right
-
-    TmComparison comp left right ->
-      termShiftBinaryHelper d c (TmComparison comp) left right
-
-    TmBool _ ->
-      t.value
-
-    TmInt _ ->
-      t.value
-    
-    TmChar _ ->
-      t.value
-    
-    TmUnit ->
-      t.value
-
-
-termShiftBinaryHelper : Int -> Int -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
-termShiftBinaryHelper d c f left right =
-  f
-  (termShift d c left)
-  (termShift d c right)
-
-
-termSubst : Int -> Located Term -> Located Term -> Located Term
-termSubst j s t =
-  withLocation t <|
-  case t.value of
-    TmVariable k ->
-      if j == k then
-        s.value
-      else
-        t.value
-    
-    TmAbstraction boundVar boundType t1 ->
-      TmAbstraction boundVar boundType <| termSubst (j + 1) (termShift 1 0 s) t1
-
-    TmApplication t1 t2 ->
-      TmApplication
-      (termSubst j s t1)
-      (termSubst j s t2)
-
-    TmIf condition thenBranch elseBranch ->
-      TmIf
-      (termSubst j s condition)
-      (termSubst j s thenBranch)
-      (termSubst j s elseBranch)
-    
-    TmLet (label, tm1) tm2 ->
-      TmLet
-      (label, termSubst j s tm1)
-      (termSubst (j + 1) (termShift 1 0 s) tm2)
-    
-    TmCase tm variants ->
-      TmCase
-      (termSubst j s tm)
-      ( Dict.map
-        (\_ (variantName, valueName, innerTerm) ->
-          (variantName, valueName, termSubst (j + 1) (termShift 1 0 s) innerTerm)
-        )
-        variants
-      )
-    
-    TmVariant variantName value ->
-      TmVariant
-      variantName
-      (termSubst j s value)
-    
-    TmAdd left right ->
-      termSubstBinaryHelper j s TmAdd left right
-
-    TmSubtract left right ->
-      termSubstBinaryHelper j s TmSubtract left right
-
-    TmMultiplication left right ->
-      termSubstBinaryHelper j s TmMultiplication left right
-    
-    TmDivision left right ->
-      termSubstBinaryHelper j s TmDivision left right
-
-    TmComparison comp left right ->
-      termSubstBinaryHelper j s (TmComparison comp) left right
-
-    TmPair t1 t2 ->
-      termSubstBinaryHelper j s TmPair t1 t2
-
-    TmPairAccess pair index ->
-      TmPairAccess (termSubst j s pair) index
-
-    TmRecord r ->
-      TmRecord <|
-      Dict.map
-        (\_ (label, value) ->
-          (label, termSubst j s value)
-        )
-        r
-
-    TmRecordAccess record label ->
-      TmRecordAccess (termSubst j s record) label
-
-    TmBool _ ->
-      t.value
-
-    TmInt _ ->
-      t.value
-    
-    TmChar _ ->
-      t.value
-    
-    TmUnit ->
-      t.value
-
-
-termSubstBinaryHelper : Int -> Located Term -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
-termSubstBinaryHelper j s f left right =
-  f
-  (termSubst j s left)
-  (termSubst j s right)
-    

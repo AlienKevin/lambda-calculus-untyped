@@ -1,4 +1,10 @@
-module LambdaParser exposing (parseDefs, parseDef, parseDefOrExpr, parseExpr, showProblems, showDefs, showDef, showExpr, showType, showCustomType, fakeDef, fakeType, Def(..), Expr(..), Type(..), Comparison(..), PairIndex(..))
+module LambdaParser exposing
+  ( parseDefs, parseTerm
+  , showProblems, showDefs, showDef, showTermHelper, showType, showCustomType
+  , getFreeTypes, termShift, termSubst
+  , fakeDef, fakeType
+  , Def(..), Term(..), Type(..), Comparison(..), PairIndex(..)
+  )
 
 
 import Parser.Advanced exposing (..)
@@ -68,10 +74,25 @@ type Problem
   | ExpectingOf
 
 
+type ParserDef
+  = ParserDValue
+    { name : Located String
+    , expr : Located Expr
+    }
+  | ParserDType
+    { name : Located String
+    , variants : Dict String (Located String, Located Type)
+    }
+  | ParserDAlias
+    { name : Located String
+    , ty : Located Type
+    }
+
+
 type Def
   = DValue
     { name : Located String
-    , expr : Located Expr
+    , term : Located Term
     }
   | DType
     { name : Located String
@@ -103,6 +124,29 @@ type Expr
   | ELet (Located String, Located Expr) (Located Expr)
   | EUnit
   | ECase (Located Expr) (Dict String (Located String, Located String, Located Expr))
+
+
+type Term
+  = TmVariable Int
+  | TmAbstraction (Located String) (Located Type) (Located Term)
+  | TmApplication (Located Term) (Located Term)
+  | TmVariant (Located String) (Located Term) (Located Type)
+  | TmBool Bool
+  | TmInt Int
+  | TmChar Char
+  | TmUnit
+  | TmPair (Located Term) (Located Term)
+  | TmPairAccess (Located Term) (Located PairIndex)
+  | TmRecord (Dict String (Located String, Located Term))
+  | TmRecordAccess (Located Term) (Located String)
+  | TmIf (Located Term) (Located Term) (Located Term)
+  | TmAdd (Located Term) (Located Term)
+  | TmSubtract (Located Term) (Located Term)
+  | TmMultiplication (Located Term) (Located Term)
+  | TmDivision (Located Term) (Located Term)
+  | TmComparison Comparison (Located Term) (Located Term)
+  | TmLet (Located String, Located Term) (Located Term)
+  | TmCase (Located Term) (Dict String (Located String, Located String, Located Term))
 
 
 type PairIndex
@@ -140,80 +184,121 @@ reserved =
 parseDefs : String -> Result (List (DeadEnd Context Problem)) (List Def)
 parseDefs src =
   run
-    (succeed identity
+    (succeed
+      parserDefsToDefs
       |= withIndent 0 internalParseDefs
       |. end ExpectingDefinition
     )
     src
 
 
-parseDef : String -> Result (List (DeadEnd Context Problem)) Def
-parseDef src =
-  run
-    (succeed identity
-      |= withIndent 0 internalParseDef
-      |. end ExpectingEndOfDefinition
+parserDefsToDefs : List ParserDef -> List Def
+parserDefsToDefs parserDefs =
+  let
+    sortedParserDefs =
+      sortParserDefs parserDefs
+    
+    sortedDefs =
+      Tuple.first <|
+      List.foldl
+        (\parserDef (defs, mappings) ->
+          case parserDef of
+            ParserDValue { name, expr } ->
+              let
+                term =
+                  exprToTerm mappings expr
+                
+                def =
+                  DValue
+                    { name =
+                      name
+                    , term =
+                      term
+                    }
+              in
+              ( Dict.insert name.value def defs
+              , Dict.insert name.value term mappings
+              )
+            
+            ParserDType { name, variants } ->
+              let
+                def =
+                  DType
+                    { name =
+                      name
+                    , variants =
+                      variants
+                    }
+                  
+                customType =
+                  withLocation name <| TyCustom name variants
+              in
+              ( Dict.insert name.value def defs
+              , Dict.foldl
+                (\_ (label, ty) nextMappings ->
+                  ( withLocation label <|
+                    TmAbstraction
+                    (withLocation ty <| "x")
+                    ty
+                    (withLocation label <|
+                      TmVariant
+                      label
+                      (withLocation ty <| TmVariable 0)
+                      customType
+                    )
+                  ) |>
+                  (\tm ->
+                    Dict.insert label.value tm nextMappings
+                  )
+                )
+                mappings
+                variants
+                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1) customType)
+              )
+            
+            ParserDAlias { name, ty } ->
+              let
+                def =
+                  DAlias
+                    { name =
+                      name
+                    , ty =
+                      ty
+                    }
+              in
+              ( Dict.insert name.value def defs
+              , mappings
+                |> Dict.insert name.value (withLocation name <| TmVariant name (withLocation name <| TmVariable -1) ty)
+              )
+        )
+        (Dict.empty, Dict.empty)
+        sortedParserDefs
+  in
+  -- return in sorted order
+  List.map
+    (\def ->
+      let
+        name =
+          getParserDefName def
+      in
+      Maybe.withDefault fakeDef <| -- impossible
+      Dict.get name.value sortedDefs
     )
-    src
+    sortedParserDefs
 
 
-parseDefOrExpr : String -> String -> Result (List (DeadEnd Context Problem)) Def
-parseDefOrExpr exprName src =
+parseTerm : String -> Result (List (DeadEnd Context Problem)) (Located Term)
+parseTerm src =
   run
-    ( succeed identity
-      |. sps
-      |= optionalWithDefault (fakeLocated exprName)
-        ( succeed identity
-          |= parseName
-          |. sps
-          |. symbol (Token "=" ExpectingEqual)
-          |. sps
-        )
-      |> andThen
-        (\name ->
-          succeed (\expr -> { name = name, expr = expr })
-          |= ( if isFakeLocated name then
-              withIndent 0 internalParseExpr
-            else
-              withIndent 0 <| indent internalParseExpr
-          )
-          |. sps
-        )
-      |> andThen
-        (\def ->
-          succeed
-            ( DValue
-              { def
-                | name =
-                  if isFakeLocated def.name then
-                    withLocation def.expr def.name.value
-                  else
-                    def.name
-              }
-            )
-            |. (
-              end <|
-              if isFakeLocated def.name then
-                ExpectingEndOfExpression
-              else
-                ExpectingEndOfDefinition
-            )
-        )
-    )
-    src
-
-
-parseExpr : String -> Result (List (DeadEnd Context Problem)) (Located Expr)
-parseExpr src =
-  run
-    (succeed identity
+    (succeed
+      (exprToTerm Dict.empty)
       |= withIndent 0 internalParseExpr
       |. end ExpectingEndOfExpression
     )
     src
 
 
-internalParseDefs : LambdaParser (List Def)
+internalParseDefs : LambdaParser (List ParserDef)
 internalParseDefs =
   loop [] <|
     (\revDefs ->
@@ -228,7 +313,7 @@ internalParseDefs =
     )
 
 
-parseDValue : LambdaParser Def
+parseDValue : LambdaParser ParserDef
 parseDValue =
   succeed identity
     |= parseName
@@ -237,17 +322,17 @@ parseDValue =
     |> andThen
     (\name ->
       indent <|
-      succeed (\expr -> DValue { name = name, expr = expr })
+      succeed (\expr -> ParserDValue { name = name, expr = expr })
       |. sps
       |= internalParseExpr
     )
 
 
-parseDAlias : LambdaParser Def
+parseDAlias : LambdaParser ParserDef
 parseDAlias =
   succeed
     (\name ty ->
-      DAlias
+      ParserDAlias
         { name =
           name
         , ty =
@@ -265,11 +350,11 @@ parseDAlias =
     |= parseType
 
 
-parseDType : LambdaParser Def
+parseDType : LambdaParser ParserDef
 parseDType =
   succeed
   (\name (firstVariant, restVariants) ->
-    DType
+    ParserDType
       { name =
         name
       , variants =
@@ -315,7 +400,7 @@ parseTypeVariant =
     |= parseType
 
 
-internalParseDef : LambdaParser Def
+internalParseDef : LambdaParser ParserDef
 internalParseDef =
   oneOf
     [ backtrackable parseDAlias
@@ -1152,8 +1237,8 @@ showDefs defs =
 showDef : Def -> String
 showDef def =
   case def of
-    DValue { name, expr } ->
-      name.value ++ " = " ++ showExpr expr.value
+    DValue { name, term } ->
+      name.value ++ " = " ++ showTerm term.value
     
     DType { name, variants } ->
       showCustomType name variants
@@ -1163,52 +1248,69 @@ showDef def =
       ++ (indentStr <| "\n" ++ showType ty.value)
 
 
-showExpr : Expr -> String
-showExpr expr =
-  case expr of
-    EVariable name ->
-      name.value
+showTerm : Term -> String
+showTerm tm =
+  showTermHelper [] tm
+
+
+showTermHelper : List String -> Term -> String
+showTermHelper names tm =
+  case tm of
+    TmVariable index ->
+      Maybe.withDefault "IMPOSSIBLE" <| List.Extra.getAt index names
     
-    EApplication e1 e2 ->
+    TmApplication e1 e2 ->
       ( if needsWrapping e1.value
         && ( case e1.value of
-          EApplication _ _ ->
+          TmApplication _ _ ->
             False
           
           _ ->
             True
         ) then
-          "(" ++ showExpr e1.value ++ ")"
+          "(" ++ showTermHelper names e1.value ++ ")"
         else
-          showExpr e1.value
+          showTermHelper names e1.value
       )
       ++ " "
       ++ ( if needsWrapping e2.value
         then
-          "(" ++ showExpr e2.value ++ ")"
+          "(" ++ showTermHelper names e2.value ++ ")"
         else
-          showExpr e2.value
+          showTermHelper names e2.value
       )
     
-    EAbstraction boundVar boundType innerExpr ->
-      "\\" ++ boundVar.value ++ ":" ++ showType boundType.value ++ ". " ++ showExpr innerExpr.value
+    TmAbstraction boundVar boundType t1 ->
+      if boundVar.value == "$variant" then
+        case t1.value of
+          TmVariant variantName _ _ ->
+            variantName.value
+          
+          _ -> -- impossible
+            "IMPOSSIBLE"
+      else
+        let
+          (newNames, newBoundVar) =
+            pickNewName names boundVar
+        in
+        "\\" ++ newBoundVar.value ++ ":" ++ showType boundType.value ++ ". " ++ showTermHelper newNames t1.value
 
-    EBool bool ->
+    TmBool bool ->
       if bool then
         "true"
       else
         "false"
 
-    EInt int ->
+    TmInt int ->
       String.fromInt int
 
-    EPair e1 e2 ->
-      "(" ++ showExpr e1.value ++ ", " ++ showExpr e2.value ++ ")"
+    TmPair e1 e2 ->
+      "(" ++ showTermHelper names e1.value ++ ", " ++ showTermHelper names e2.value ++ ")"
 
-    EPairAccess pair index ->
-      showExpr pair.value ++ "." ++ showPairIndex index.value
+    TmPairAccess pair index ->
+      showTermHelper names pair.value ++ "." ++ showPairIndex index.value
 
-    ERecord r ->
+    TmRecord r ->
       (\pairs ->
         if String.isEmpty pairs then
           "{}"
@@ -1220,126 +1322,129 @@ showExpr expr =
       String.join "\n, " <|
       Dict.foldr
         (\_ (label, value) list ->
-          (label.value ++ " = " ++ showExpr value.value) :: list
+          (label.value ++ " = " ++ showTermHelper names value.value) :: list
         )
         []
         r
 
-    ERecordAccess r label ->
-      "(" ++ showExpr r.value ++ ")." ++ label.value
+    TmRecordAccess r label ->
+      "(" ++ showTermHelper names r.value ++ ")." ++ label.value
 
-    EAdd left right ->
-      showExprWrapped expr left ++ " + " ++ showExprWrapped expr right
+    TmAdd left right ->
+      showTermWrapped names tm left ++ " + " ++ showTermWrapped names tm right
 
-    ESubtract left right ->
-      showExprWrapped expr left ++ " - " ++ showExprWrapped expr right
+    TmSubtract left right ->
+      showTermWrapped names tm left ++ " - " ++ showTermWrapped names tm right
 
-    EMultiplication left right ->
-      showExprWrapped expr left ++ " * " ++ showExprWrapped expr right
+    TmMultiplication left right ->
+      showTermWrapped names tm left ++ " * " ++ showTermWrapped names tm right
 
-    EDivision left right ->
-      showExprWrapped expr left ++ " / " ++ showExprWrapped expr right
+    TmDivision left right ->
+      showTermWrapped names tm left ++ " / " ++ showTermWrapped names tm right
 
-    EComparison comp left right ->
-      showExprWrapped expr left ++ " " ++ showComparison comp ++ " " ++ showExprWrapped expr right
+    TmComparison comp left right ->
+      showTermWrapped names tm left ++ " " ++ showComparison comp ++ " " ++ showTermWrapped names tm right
     
-    EIf condition thenBranch elseBranch ->
-      "if " ++ showExpr condition.value ++ " then"
-      ++ indentStr ( "\n" ++ showExpr thenBranch.value )
+    TmIf condition thenBranch elseBranch ->
+      "if " ++ showTermHelper names condition.value ++ " then"
+      ++ indentStr ( "\n" ++ showTermHelper names thenBranch.value )
       ++ "\nelse"
-      ++ indentStr ( "\n" ++ showExpr elseBranch.value)
+      ++ indentStr ( "\n" ++ showTermHelper names elseBranch.value)
 
-    ELet (label, e1) e2 ->
+    TmLet (label, e1) e2 ->
       indentStr <|
       "\nlet"
       ++ indentStr (
-        "\n" ++ label.value ++ " = " ++ showExpr e1.value
+        "\n" ++ label.value ++ " = " ++ showTermHelper names e1.value
       )
       ++ "\nin"
-      ++ "\n" ++ showExpr e2.value
+      ++ "\n" ++ showTermHelper names e2.value
 
-    EUnit ->
+    TmUnit ->
       "()"
     
-    ECase e variants ->
-      "case " ++ showExpr e.value ++ " of"
+    TmCase e variants ->
+      "case " ++ showTermHelper names e.value ++ " of"
       ++ Dict.foldl
       (\_ (variantName, valueName, innerExpr) str ->
         indentStr (
           "\n" ++ variantName.value ++ " " ++ valueName.value ++ " ->"
-          ++ indentStr ("\n" ++ showExpr innerExpr.value)
+          ++ indentStr ("\n" ++ showTermHelper names innerExpr.value)
         ) ++ str
       )
       ""
       variants
 
-    EChar c ->
+    TmVariant variantName value _ ->
+      variantName.value ++ " " ++ showTermHelper names value.value
+
+    TmChar c ->
       "'" ++ String.fromChar c ++ "'"
 
 
-showExprWrapped : Expr -> Located Expr -> String
-showExprWrapped expr subExpr =
-  if needsWrapping subExpr.value
+showTermWrapped : List String -> Term -> Located Term -> String
+showTermWrapped names tm subTm =
+  if needsWrapping subTm.value
   && (
-    getOperatorPrecedence expr
-    > getOperatorPrecedence subExpr.value
+    getOperatorPrecedence tm
+    > getOperatorPrecedence subTm.value
   )
   then
-    "(" ++ showExpr subExpr.value ++ ")"
+    "(" ++ showTermHelper names subTm.value ++ ")"
   else
-    showExpr subExpr.value
+    showTermHelper names subTm.value
 
 
-getOperatorPrecedence : Expr -> Int
-getOperatorPrecedence expr =
-  case expr of
-    EMultiplication _ _ ->
+getOperatorPrecedence : Term -> Int
+getOperatorPrecedence tm =
+  case tm of
+    TmMultiplication _ _ ->
       7
     
-    EDivision _ _ ->
+    TmDivision _ _ ->
       7
     
-    EAdd _ _ ->
+    TmAdd _ _ ->
       6
     
-    ESubtract _ _ ->
+    TmSubtract _ _ ->
       6
     
-    EComparison _ _ _ ->
+    TmComparison _ _ _ ->
       4
     
     _ ->
       0
 
 
-needsWrapping : Expr -> Bool
-needsWrapping e =
-  case e of
-    EVariable _ ->
+needsWrapping : Term -> Bool
+needsWrapping tm =
+  case tm of
+    TmVariable _ ->
       False
     
-    EBool _ ->
+    TmBool _ ->
       False
     
-    EInt _ ->
+    TmInt _ ->
       False
     
-    EChar _ ->
+    TmChar _ ->
       False
     
-    EUnit ->
+    TmUnit ->
       False
     
-    EPair _ _ ->
+    TmPair _ _ ->
       False
     
-    EPairAccess _ _ ->
+    TmPairAccess _ _ ->
       False
 
-    ERecord _ ->
+    TmRecord _ ->
       False
     
-    ERecordAccess _ _ ->
+    TmRecordAccess _ _ ->
       False
     
     _ ->
@@ -1462,11 +1567,16 @@ fakeLocatedExpr =
   fakeLocated <| EVariable <| fakeLocated "IMPOSSIBLE"
 
 
+fakeLocatedTerm : Located Term
+fakeLocatedTerm =
+  fakeLocated <| TmVariable -1
+
+
 fakeDef : Def
 fakeDef =
   DValue
     { name = fakeLocated "IMPOSSIBLE"
-    , expr = fakeLocatedExpr
+    , term = fakeLocatedTerm
     }
 
 
@@ -1475,17 +1585,600 @@ fakeType =
   TyName (fakeLocated "IMPOSSIBLE")
 
 
-optionalWithDefault : a -> LambdaParser a -> LambdaParser a
-optionalWithDefault default parser =
-  oneOf
-    [ backtrackable parser
-    , succeed default
-    ]
-
-
 optional : LambdaParser a -> LambdaParser (Maybe a)
 optional parser =
   oneOf
     [ backtrackable (map Just parser)
     , succeed Nothing
     ]
+
+
+pickNewName : List String -> Located String -> (List String, Located String)
+pickNewName names boundVar =
+  let
+    newName =
+      if List.member boundVar.value names then
+        boundVar.value ++ (String.fromInt <| List.length names)
+      else
+        boundVar.value
+  in
+  ( newName :: names
+  , withLocation boundVar newName
+  )
+
+
+type alias Mappings =
+  Dict String (Located Term)
+
+
+exprToTerm : Mappings -> Located Expr -> Located Term
+exprToTerm mappings expr =
+  withLocation expr <|
+  case expr.value of
+    EVariable name ->
+      case Dict.get name.value mappings of
+        Nothing -> -- impossible
+          TmVariable -1
+        
+        Just s ->
+          s.value
+
+    EAbstraction boundVar boundType e1 ->
+      let
+        innerMappings =
+          mappings |>
+          Dict.map (\_ s -> termShift 1 0 s) |>
+          Dict.insert boundVar.value (withLocation boundVar <| TmVariable 0)
+        
+        newBoundType =
+          case boundType.value of
+            TyName name ->
+              case Dict.get name.value mappings of
+                Just ty ->
+                  case ty.value of
+                    TmVariant _ _ substTy ->
+                      substTy
+                    
+                    _ ->
+                      boundType
+                
+                Nothing ->
+                  boundType
+            
+            _ ->
+              boundType
+      in
+      TmAbstraction boundVar newBoundType <| exprToTerm innerMappings e1
+
+    EApplication e1 e2 ->
+      TmApplication
+      (exprToTerm mappings e1)
+      (exprToTerm mappings e2)
+
+    EIf condition thenBranch elseBranch ->
+      TmIf
+      (exprToTerm mappings condition)
+      (exprToTerm mappings thenBranch)
+      (exprToTerm mappings elseBranch)
+
+    ELet (label, e1) e2 ->
+      let
+        innerCtx =
+          mappings |>
+          Dict.map (\_ s -> termShift 1 0 s) |>
+          Dict.insert label.value (withLocation label <| TmVariable 0)
+      in
+      TmLet
+      (label, exprToTerm mappings e1)
+      (exprToTerm innerCtx e2)
+
+    ECase e variants ->
+      TmCase
+      (exprToTerm mappings e)
+      ( Dict.map
+        (\_ (variantName, valueName, innerExpr) ->
+          let
+            innerCtx =
+              mappings |>
+              Dict.map (\_ s -> termShift 1 0 s) |>
+              Dict.insert valueName.value (withLocation valueName <| TmVariable 0)
+          in
+          (variantName, valueName, exprToTerm innerCtx innerExpr)
+        )
+        variants
+      )
+
+    EPair e1 e2 ->
+      exprToTermBinaryHelper mappings TmPair e1 e2
+
+    EPairAccess pair index ->
+      TmPairAccess
+      (exprToTerm mappings pair)
+      index
+    
+    ERecord r ->
+      TmRecord <|
+        Dict.map
+          (\_ (label, value) ->
+            (label, exprToTerm mappings value)
+          )
+          r
+
+    ERecordAccess record label ->
+      TmRecordAccess
+      (exprToTerm mappings record)
+      label
+
+    EAdd left right ->
+      exprToTermBinaryHelper mappings TmAdd left right
+
+    ESubtract left right ->
+      exprToTermBinaryHelper mappings TmSubtract left right
+
+    EMultiplication left right ->
+      exprToTermBinaryHelper mappings TmMultiplication left right
+
+    EDivision left right ->
+      exprToTermBinaryHelper mappings TmDivision left right
+
+    EComparison comp left right ->
+      exprToTermBinaryHelper mappings (TmComparison comp) left right
+
+    EBool bool ->
+      TmBool bool
+
+    EInt int ->
+      TmInt int
+    
+    EChar char ->
+      TmChar char
+    
+    EUnit ->
+      TmUnit
+
+
+exprToTermBinaryHelper : Mappings -> (Located Term -> Located Term -> Term) -> Located Expr -> Located Expr -> Term
+exprToTermBinaryHelper mappings f left right =
+  f
+    (exprToTerm mappings left)
+    (exprToTerm mappings right)
+
+
+termShift : Int -> Int -> Located Term -> Located Term
+termShift d c t =
+  withLocation t <|
+  case t.value of
+    TmVariable k ->
+      if k < c then
+        TmVariable k
+      else
+        TmVariable <| k + d
+    
+    TmAbstraction boundVar boundType t1 ->
+      TmAbstraction boundVar boundType <| termShift d (c + 1) t1
+
+    TmApplication t1 t2 ->
+      TmApplication (termShift d c t1) (termShift d c t2)
+
+    TmIf condition thenBranch elseBranch ->
+      TmIf
+      (termShift d c condition)
+      (termShift d c thenBranch)
+      (termShift d c elseBranch)
+
+    TmLet (label, tm1) tm2 ->
+      TmLet
+      (label, termShift d c tm1)
+      (termShift d (c + 1) tm2)
+    
+    TmCase tm variants ->
+      TmCase
+      (termShift d c tm)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          (variantName, valueName, termShift d (c + 1) innerTerm)
+        )
+        variants
+      )
+    
+    TmVariant variantName value customType ->
+      TmVariant
+      variantName
+      (termShift d c value)
+      customType
+
+    TmPair t1 t2 ->
+      termShiftBinaryHelper d c TmPair t1 t2
+
+    TmPairAccess pair index ->
+      TmPairAccess (termShift d c pair) index
+
+    TmRecord r ->
+      TmRecord <|
+      Dict.map
+        (\_ (label, value) ->
+          (label, termShift d c value)
+        )
+        r
+
+    TmRecordAccess record label ->
+      TmRecordAccess (termShift d c record) label
+
+    TmAdd left right ->
+      termShiftBinaryHelper d c TmAdd left right
+
+    TmSubtract left right ->
+      termShiftBinaryHelper d c TmSubtract left right
+
+    TmMultiplication left right ->
+      termShiftBinaryHelper d c TmMultiplication left right
+
+    TmDivision left right ->
+      termShiftBinaryHelper d c TmDivision left right
+
+    TmComparison comp left right ->
+      termShiftBinaryHelper d c (TmComparison comp) left right
+
+    TmBool _ ->
+      t.value
+
+    TmInt _ ->
+      t.value
+    
+    TmChar _ ->
+      t.value
+    
+    TmUnit ->
+      t.value
+
+
+termShiftBinaryHelper : Int -> Int -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
+termShiftBinaryHelper d c f left right =
+  f
+  (termShift d c left)
+  (termShift d c right)
+
+
+termSubst : Int -> Located Term -> Located Term -> Located Term
+termSubst j s t =
+  withLocation t <|
+  case t.value of
+    TmVariable k ->
+      if j == k then
+        s.value
+      else
+        t.value
+    
+    TmAbstraction boundVar boundType t1 ->
+      TmAbstraction boundVar boundType <| termSubst (j + 1) (termShift 1 0 s) t1
+
+    TmApplication t1 t2 ->
+      TmApplication
+      (termSubst j s t1)
+      (termSubst j s t2)
+
+    TmIf condition thenBranch elseBranch ->
+      TmIf
+      (termSubst j s condition)
+      (termSubst j s thenBranch)
+      (termSubst j s elseBranch)
+    
+    TmLet (label, tm1) tm2 ->
+      TmLet
+      (label, termSubst j s tm1)
+      (termSubst (j + 1) (termShift 1 0 s) tm2)
+    
+    TmCase tm variants ->
+      TmCase
+      (termSubst j s tm)
+      ( Dict.map
+        (\_ (variantName, valueName, innerTerm) ->
+          (variantName, valueName, termSubst (j + 1) (termShift 1 0 s) innerTerm)
+        )
+        variants
+      )
+    
+    TmVariant variantName value customType ->
+      TmVariant
+      variantName
+      (termSubst j s value)
+      customType
+    
+    TmAdd left right ->
+      termSubstBinaryHelper j s TmAdd left right
+
+    TmSubtract left right ->
+      termSubstBinaryHelper j s TmSubtract left right
+
+    TmMultiplication left right ->
+      termSubstBinaryHelper j s TmMultiplication left right
+    
+    TmDivision left right ->
+      termSubstBinaryHelper j s TmDivision left right
+
+    TmComparison comp left right ->
+      termSubstBinaryHelper j s (TmComparison comp) left right
+
+    TmPair t1 t2 ->
+      termSubstBinaryHelper j s TmPair t1 t2
+
+    TmPairAccess pair index ->
+      TmPairAccess (termSubst j s pair) index
+
+    TmRecord r ->
+      TmRecord <|
+      Dict.map
+        (\_ (label, value) ->
+          (label, termSubst j s value)
+        )
+        r
+
+    TmRecordAccess record label ->
+      TmRecordAccess (termSubst j s record) label
+
+    TmBool _ ->
+      t.value
+
+    TmInt _ ->
+      t.value
+    
+    TmChar _ ->
+      t.value
+    
+    TmUnit ->
+      t.value
+
+
+termSubstBinaryHelper : Int -> Located Term -> (Located Term -> Located Term -> Term) -> Located Term -> Located Term -> Term
+termSubstBinaryHelper j s f left right =
+  f
+  (termSubst j s left)
+  (termSubst j s right)
+
+
+sortParserDefs : List ParserDef -> List ParserDef
+sortParserDefs defs =
+  let
+    dependencies =
+      List.foldl
+      (\def deps ->
+        case def of
+          ParserDValue { name, expr } ->
+            Dict.insert
+            name.value
+            (Set.toList <| getFreeNames expr.value)
+            deps
+          
+          ParserDType { name, variants } ->
+            (\nextDeps ->
+              Dict.foldl
+              (\_ (label, _) resultDeps ->
+                Dict.insert label.value [] resultDeps
+              )
+              nextDeps
+              variants
+            ) <|
+            Dict.insert
+            name.value
+            (List.concat <|
+              List.map (\(_, (_, ty)) -> List.map .value <| getFreeTypes ty.value) <|
+              Dict.toList variants
+            )
+            deps
+          
+          ParserDAlias { name, ty } ->
+            Dict.insert
+            name.value
+            (List.map .value <| getFreeTypes ty.value)
+            deps
+      )
+      Dict.empty
+      defs
+    
+    sortedNames =
+      sortDependencies dependencies
+  in
+  List.filterMap
+  identity <|
+  List.map
+  (\name ->
+    List.Extra.find
+      (\def ->
+        (getParserDefName def).value == name
+      )
+      defs
+  )
+  sortedNames
+
+
+getParserDefName : ParserDef -> Located String
+getParserDefName def =
+  case def of
+    ParserDValue { name } ->
+      name
+    
+    ParserDType { name } ->
+      name
+    
+    ParserDAlias { name } ->
+      name
+
+
+getFreeTypes : Type -> List (Located String)
+getFreeTypes ty =
+  case ty of
+    TyName label ->
+      [ label ]
+    
+    TyCustom name _ ->
+      [ name ]
+    
+    TyPair left right ->
+      getFreeTypes left.value
+      ++ getFreeTypes right.value
+    
+    TyRecord r ->
+      Dict.foldl
+        (\_ (_, valueType) types ->
+          getFreeTypes valueType.value ++ types
+        )
+        []
+        r
+
+    TyFunc boundType innerType ->
+      getFreeTypes boundType.value
+      ++ getFreeTypes innerType.value
+    
+    _ ->
+      []
+
+
+getFreeNames : Expr -> Set String
+getFreeNames expr =
+  getFreeNamesHelper Set.empty expr
+
+
+getFreeNamesHelper : Set String -> Expr -> Set String
+getFreeNamesHelper boundVariables expr =
+  case expr of
+    EVariable name ->
+      if Set.member name.value boundVariables then
+        Set.empty
+      else
+        Set.singleton name.value 
+    
+    EAbstraction boundVar boundType innerExpr ->
+      Set.union
+      ( case boundType.value of
+        TyName label ->
+          Set.singleton label.value
+        
+        TyCustom name _ ->
+          Set.singleton name.value
+        
+        _ ->
+          Set.empty
+      )
+      (getFreeNamesHelper (Set.insert boundVar.value boundVariables) innerExpr.value)
+    
+    EApplication func arg ->
+      Set.union
+      (getFreeNamesHelper boundVariables func.value)
+      (getFreeNamesHelper boundVariables arg.value)
+
+    EBool _ ->
+      Set.empty
+    
+    EInt _ ->
+      Set.empty
+
+    EChar _ ->
+      Set.empty
+
+    EUnit ->
+      Set.empty
+
+    EPair e1 e2 ->
+      getFreeVariablesBinaryHelper boundVariables e1 e2
+
+    EPairAccess pair _ ->
+      getFreeNamesHelper boundVariables pair.value
+
+    ERecord r ->
+      Dict.foldl
+        (\_ (_, value) freeVars ->
+          Set.union
+          (getFreeNamesHelper boundVariables value.value)
+          freeVars
+        )
+        Set.empty
+        r
+
+    ERecordAccess record _ ->
+      getFreeNamesHelper boundVariables record.value
+
+    EAdd left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    ESubtract left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    EMultiplication left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    EDivision left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+    
+    EComparison _ left right ->
+      getFreeVariablesBinaryHelper boundVariables left right
+
+    EIf condition thenBranch elseBranch ->
+      Set.union
+      (getFreeNamesHelper boundVariables condition.value)
+      ( Set.union
+        (getFreeNamesHelper boundVariables thenBranch.value)
+        (getFreeNamesHelper boundVariables elseBranch.value)
+      )
+
+    ELet (label, e1) e2 ->
+      Set.union
+      (getFreeNamesHelper boundVariables e1.value)
+      (getFreeNamesHelper (Set.insert label.value boundVariables) e2.value)
+  
+    ECase e variants ->
+      Set.union
+      (getFreeNamesHelper boundVariables e.value)
+      ( Dict.foldl
+        (\_ (_, valueName, innerExpr) set ->
+          Set.union
+          ( getFreeNamesHelper
+            (Set.insert valueName.value boundVariables)
+            innerExpr.value
+          )
+          set
+        )
+        Set.empty
+        variants
+      )
+
+
+getFreeVariablesBinaryHelper : Set String -> Located Expr -> Located Expr -> Set String
+getFreeVariablesBinaryHelper boundVariables left right =
+  Set.union
+  (getFreeNamesHelper boundVariables left.value)
+  (getFreeNamesHelper boundVariables right.value)
+
+
+type alias Dependencies =
+  Dict String (List String)
+
+
+sortDependencies : Dependencies -> List String
+sortDependencies dep =
+  let
+    (result, _, _) =
+      sortDependenciesHelper ([], Set.empty, dep)
+  in
+  List.reverse result
+  
+
+sortDependenciesHelper : (List String, Set String, Dependencies) -> (List String, Set String, Dependencies)
+sortDependenciesHelper (result0, used0, dep0) =
+  let
+    (result1, used1, dep1) =
+      Dict.foldl
+      (\k v (result, used, dep) ->
+        if List.all (\value -> Set.member value used) v then
+          (k :: result, Set.insert k used, Dict.filter (\k1 _ -> k /= k1) dep)
+        else
+          (result, used, dep)
+      )
+      (result0, used0, dep0)
+      dep0
+  in
+  if Dict.isEmpty dep1 then
+    (result1, used1, dep1)
+  else if Dict.size dep0 == Dict.size dep1 then
+    ((List.reverse <| Dict.keys dep1) ++ result1, used1, dep1)
+  else
+    sortDependenciesHelper (result1, used1, dep1)

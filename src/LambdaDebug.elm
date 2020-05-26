@@ -68,13 +68,13 @@ p3 = quadruplePersonAge p2
 a1 = Age 1
 a2 = doubleAge a1
 
-doubleAge = \\a: Age.
+doubleAge = \\a: AgeValue.
   case a of
     Age a ->
       Age (a * 2)
 
 
-isAdultAge = \\a: Age.
+isAdultAge = \\a: AgeValue.
   case a of
     Age a ->
       a >= 18
@@ -97,10 +97,10 @@ quadruplePersonAge = \\p:Person.
 
 
 type Person
-  = Adult Age
-  | Teen Age
+  = Adult AgeValue
+  | Teen AgeValue
 
-type Age =
+type AgeValue =
   Age Int
   """
 
@@ -120,7 +120,7 @@ type Age =
 --   dx * dx + dy * dy
 
 -- d1 = squaredDistance p1 p2
-  -- """
+--   """
 --   """letter1 = 'a'
 -- isZero = \\c: Char. c == '0'
 -- v1 = isZero letter1

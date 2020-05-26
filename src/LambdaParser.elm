@@ -366,8 +366,8 @@ parseDType =
         (firstVariant :: restVariants)
       }
   )
-  |. keyword (Token "type" ExpectingType)
-  |. sps
+  |. (backtrackable <| keyword (Token "type" ExpectingType))
+  |. backtrackable sps
   |= parseTypeName
   |. sps
   |. symbol (Token "=" ExpectingEqual)
@@ -403,8 +403,8 @@ parseTypeVariant =
 internalParseDef : LambdaParser ParserDef
 internalParseDef =
   oneOf
-    [ backtrackable parseDAlias
-    , parseDType
+    [ parseDType
+    , parseDAlias
     , parseDValue
     ]
 
